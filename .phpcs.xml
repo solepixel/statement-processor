@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<ruleset name="Statement Processor">
+	<description>WordPress coding standards for Statement Processor plugin.</description>
+
+	<file>.</file>
+
+	<!-- Exclude vendor and build artifacts -->
+	<exclude-pattern>*/vendor/*</exclude-pattern>
+	<exclude-pattern>*/node_modules/*</exclude-pattern>
+
+	<!-- Use WordPress extra ruleset -->
+	<rule ref="WordPress">
+		<exclude name="WordPress.Files.FileName.InvalidClassFileName"/>
+	</rule>
+
+	<!-- Text domain -->
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array">
+				<element value="statement-processor"/>
+			</property>
+		</properties>
+	</rule>
+
+	<!-- Prefix for globals -->
+	<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+		<properties>
+			<property name="prefixes" type="array">
+				<element value="statement_processor"/>
+				<element value="StatementProcessor"/>
+			</property>
+		</properties>
+	</rule>
+
+	<config name="testVersion" value="7.4-"/>
+</ruleset>
