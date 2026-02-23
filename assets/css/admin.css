@@ -73,6 +73,18 @@
 	margin-bottom: 1em;
 }
 
+.statement-processor-import-submit .statement-processor-import-progress {
+	margin-left: 0.75em;
+	font-size: 13px;
+	color: #646970;
+	vertical-align: middle;
+}
+
+.statement-processor-import-btn.is-busy {
+	cursor: wait;
+	opacity: 0.85;
+}
+
 /* Upload button loading state */
 .statement-processor-upload-btn.is-busy {
 	cursor: wait;
@@ -158,4 +170,99 @@
 .statement-processor-review-table .sp-file-icon.sp-file-csv {
 	background: #00a32a;
 	color: #fff;
+}
+
+/* Per-file upload and processing progress */
+.statement-processor-upload-progress {
+	margin-top: 1em;
+	padding: 1em;
+	background: #f6f7f7;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+}
+
+.statement-processor-upload-progress-title {
+	margin: 0 0 0.75em 0;
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.statement-processor-file-progress-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.statement-processor-file-progress-item {
+	margin-bottom: 0.75em;
+	padding: 0.5em 0;
+	border-bottom: 1px solid #dcdcde;
+}
+
+.statement-processor-file-progress-item:last-child {
+	margin-bottom: 0;
+	border-bottom: none;
+}
+
+.statement-processor-file-progress-item .sp-file-name {
+	display: block;
+	font-size: 13px;
+	font-weight: 500;
+	color: #1d2327;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	margin-bottom: 0.25em;
+}
+
+.statement-processor-file-progress-item .sp-file-status {
+	font-size: 12px;
+	color: #646970;
+	margin-bottom: 0.35em;
+}
+
+.statement-processor-file-progress-item .sp-file-status.sp-error {
+	color: #d63638;
+	font-weight: 500;
+}
+
+.statement-processor-file-progress-item .sp-progress-bar-wrap {
+	height: 8px;
+	background: #dcdcde;
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.statement-processor-file-progress-item .sp-progress-bar {
+	height: 100%;
+	background: #2271b1;
+	border-radius: 4px;
+	transition: width 0.2s ease;
+}
+
+/* Indeterminate loading bar for file currently being processed (parsing) */
+.statement-processor-file-progress-item .sp-progress-bar-wrap.is-processing {
+	background: #c3c4c7;
+}
+
+.statement-processor-file-progress-item .sp-progress-bar-wrap.is-processing .sp-progress-bar {
+	width: 100% !important;
+	background: repeating-linear-gradient(
+		-45deg,
+		#2271b1,
+		#2271b1 10px,
+		#72aee6 10px,
+		#72aee6 20px
+	);
+	background-size: 28px 28px;
+	animation: statement-processor-processing-bar 0.8s linear infinite;
+}
+
+@keyframes statement-processor-processing-bar {
+	0% {
+		background-position: 0 0;
+	}
+	100% {
+		background-position: 28px 0;
+	}
 }

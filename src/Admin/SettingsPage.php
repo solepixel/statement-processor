@@ -27,10 +27,11 @@ class SettingsPage {
 	 * @var array<string, mixed>
 	 */
 	private static $defaults = [
-		'enabled'  => false,
-		'provider' => 'openai',
-		'api_key'  => '',
-		'model'    => 'gpt-4o-mini',
+		'enabled'                   => false,
+		'provider'                  => 'openai',
+		'api_key'                   => '',
+		'model'                    => 'gpt-4o-mini',
+		'auto_categorize_on_import' => false,
 	];
 
 	/**
@@ -122,6 +123,15 @@ class SettingsPage {
 			$section,
 			[ 'label_for' => 'sp_ai_model' ]
 		);
+
+		add_settings_field(
+			'sp_ai_auto_categorize',
+			__( 'Auto-categorize on import', 'statement-processor' ),
+			[ $this, 'render_auto_categorize_field' ],
+			self::PAGE_SLUG,
+			$section,
+			[ 'label_for' => 'sp_ai_auto_categorize' ]
+		);
 	}
 
 	/**
@@ -154,6 +164,8 @@ class SettingsPage {
 				$out['model'] = self::$defaults['model'];
 			}
 		}
+
+		$out['auto_categorize_on_import'] = ! empty( $input['auto_categorize_on_import'] );
 
 		return $out;
 	}
@@ -244,6 +256,20 @@ class SettingsPage {
 		?>
 		<input type="text" name="<?php echo esc_attr( self::OPTION_NAME ); ?>[model]" id="sp_ai_model" value="<?php echo esc_attr( $val ); ?>" class="regular-text" />
 		<p class="description"><?php esc_html_e( 'e.g. gpt-4o-mini, gpt-4o. Leave default for cost-effective parsing.', 'statement-processor' ); ?></p>
+		<?php
+	}
+
+	/**
+	 * Render Auto-categorize on import checkbox.
+	 */
+	public function render_auto_categorize_field() {
+		$opts = self::get_options();
+		$val  = ! empty( $opts['auto_categorize_on_import'] );
+		?>
+		<label for="sp_ai_auto_categorize">
+			<input type="checkbox" name="<?php echo esc_attr( self::OPTION_NAME ); ?>[auto_categorize_on_import]" id="sp_ai_auto_categorize" value="1" <?php checked( $val ); ?> />
+			<?php esc_html_e( 'Use AI to suggest categories on import (learned descriptions are reused without calling the API)', 'statement-processor' ); ?>
+		</label>
 		<?php
 	}
 }

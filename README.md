@@ -79,6 +79,29 @@ Transactions appear under **Transactions** (the `sp-transaction` post type list)
 - **Ally**: Trans Date, Post Date, Reference, Description, Amount rows.
 - **Generic**: Table-style and line-style date/description/amount patterns.
 
+## Troubleshooting (Import returns HTML / "invalid response")
+
+If "Import selected" shows "Server returned an invalid response" and the browser gets HTML instead of JSON:
+
+1. **Browser console**  
+   Open DevTools (F12) → Console. After reproducing the error, expand the **"Statement Processor import: debug"** group. Check:
+   - **Request URL** – should be `.../wp-admin/admin-ajax.php?action=statement_processor_import_batch`.
+   - **Response URL** – if it differs from the request URL, the request was redirected (e.g. to login or the Import page).
+   - **Response status** – 200 with HTML usually means the wrong page was served; 302 means a redirect.
+   - **Response preview** – confirms whether the body is HTML or JSON.
+
+2. **Server debug log (optional)**  
+   In `wp-config.php`, enable:
+   ```php
+   define( 'WP_DEBUG', true );
+   define( 'WP_DEBUG_LOG', true );
+   ```
+   Reproduce the import, then check `wp-content/debug.log`:
+   - **`admin-ajax request: action=statement_processor_import_batch`** – WordPress received the action.
+   - **`ajax_import_batch entered`** – the batch handler ran.
+   - **`sending JSON success`** – the handler sent a JSON response.  
+   If the first line never appears, the action is not reaching WordPress (e.g. redirect before `admin-ajax.php`). If the first appears but not the second, the handler is not firing. If all appear but the browser still gets HTML, something else is sending output or redirecting after the handler.
+
 ## Uninstall
 
 On plugin uninstall, data (posts and terms) is left in place. To remove all transaction data, delete the plugin and then remove posts of type `sp-transaction` and terms of taxonomy `sp-source` manually or via an optional `uninstall.php` script.

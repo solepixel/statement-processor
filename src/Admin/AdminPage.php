@@ -80,9 +80,18 @@ class AdminPage {
 			'statement-processor-admin',
 			'statementProcessorAdmin',
 			[
-				'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
-				'nonce'         => wp_create_nonce( 'statement_processor_upload' ),
+				'ajaxUrl'        => admin_url( 'admin-ajax.php' ),
+				'nonce'          => wp_create_nonce( 'statement_processor_upload' ),
 				'processingText' => __( 'Processing…', 'statement-processor' ),
+				'uploadLabels'       => [
+					'pending'    => __( 'Pending', 'statement-processor' ),
+					'uploading'  => __( 'Uploading…', 'statement-processor' ),
+					'processing' => __( 'Processing…', 'statement-processor' ),
+					'done'       => __( 'Done', 'statement-processor' ),
+					'error'      => __( 'Error', 'statement-processor' ),
+				],
+				'importLabel'        => __( 'Importing…', 'statement-processor' ),
+				'importProgressLabel' => __( 'Importing… %s / %s', 'statement-processor' ),
 			]
 		);
 	}
@@ -113,8 +122,7 @@ class AdminPage {
 			}
 		}
 
-		$export_nonce = wp_create_nonce( 'statement_processor_export' );
-		$sources      = get_terms( [ 'taxonomy' => 'sp-source', 'hide_empty' => false ] );
+		$sources = get_terms( [ 'taxonomy' => 'sp-source', 'hide_empty' => false ] );
 		if ( is_wp_error( $sources ) ) {
 			$sources = [];
 		}

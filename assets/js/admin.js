@@ -74,11 +74,12 @@
 			}
 		} ).trigger( 'change' );
 
-		// Upload form: validation and loading state (disable button + spinner while processing).
-		$( '.statement-processor-upload-form' ).on( 'submit', function () {
+		// Upload form: per-file upload + processing progress via AJAX.
+		$( '.statement-processor-upload-form' ).on( 'submit', function ( e ) {
+			e.preventDefault();
 			var $form = $( this );
-			var $files = $( '#statement_processor_files' )[ 0 ];
-			if ( $files && ! $files.files.length ) {
+			var fileInput = document.getElementById( 'statement_processor_files' );
+			if ( ! fileInput || ! fileInput.files.length ) {
 				alert( 'Please select at least one PDF or CSV file.' );
 				return false;
 			}
@@ -87,19 +88,278 @@
 				alert( 'Please select a source.' );
 				return false;
 			}
-			if ( sourceVal === 'detect_auto' ) {
-				// No further validation; sources can be set per row on review.
-			} else if ( sourceVal === 'add_new' && ! $( '#statement_processor_source_new' ).val().trim() ) {
+			if ( sourceVal === 'add_new' && ! $( '#statement_processor_source_new' ).val().trim() ) {
 				alert( 'Please enter the new source name.' );
 				return false;
 			}
 
+			var files = Array.prototype.slice.call( fileInput.files );
+			var $progressWrap = $( '#statement_processor_upload_progress' );
+			var $list = $( '#statement_processor_file_progress_list' );
 			var $btn = $form.find( '.statement-processor-upload-btn' );
-			if ( $btn.length && ! $btn.prop( 'disabled' ) ) {
-				$btn.prop( 'disabled', true ).addClass( 'is-busy' );
-				$btn.data( 'original-html', $btn.html() );
-				$btn.html( '<span class="statement-processor-spinner" aria-hidden="true"></span> ' + ( typeof statementProcessorAdmin !== 'undefined' && statementProcessorAdmin.processingText ? statementProcessorAdmin.processingText : 'Processing…' ) );
+			var labels = ( typeof statementProcessorAdmin !== 'undefined' && statementProcessorAdmin.uploadLabels )
+				? statementProcessorAdmin.uploadLabels
+				: { pending: 'Pending', uploading: 'Uploading…', processing: 'Processing…', done: 'Done', error: 'Error' };
+			if ( ! labels.pending ) {
+				labels.pending = 'Pending';
 			}
+
+			$list.empty();
+			files.forEach( function ( file, idx ) {
+				var $li = $( '<li class="statement-processor-file-progress-item" data-index="' + idx + '">' );
+				$li.append( '<span class="sp-file-name" title="' + ( file.name || '' ).replace( /"/g, '&quot;' ) + '">' + ( file.name || 'File ' + ( idx + 1 ) ) + '</span>' );
+				$li.append( '<div class="sp-file-status">' + labels.pending + '</div>' );
+				$li.append( '<div class="sp-progress-bar-wrap"><div class="sp-progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width:0%"></div></div>' );
+				$list.append( $li );
+			} );
+			$progressWrap.show();
+			$btn.prop( 'disabled', true ).addClass( 'is-busy' );
+
+			var sessionId = ( Date.now().toString( 36 ) + Math.random().toString( 36 ).slice( 2 ) ).replace( /[^a-z0-9]/gi, '' ).slice( 0, 32 );
+			var totalFiles = files.length;
+			var currentIndex = 0;
+
+			function setStatus( index, statusText, isError ) {
+				var $item = $list.find( '.statement-processor-file-progress-item[data-index="' + index + '"]' );
+				$item.find( '.sp-file-status' ).text( statusText ).toggleClass( 'sp-error', !! isError );
+			}
+
+			function setUploadProgress( index, percent ) {
+				var $item = $list.find( '.statement-processor-file-progress-item[data-index="' + index + '"]' );
+				$item.find( '.sp-progress-bar' ).css( 'width', Math.min( 100, Math.max( 0, percent ) ) + '%' ).attr( 'aria-valuenow', Math.round( percent ) );
+			}
+
+			function setProcessing( index ) {
+				var $item = $list.find( '.statement-processor-file-progress-item[data-index="' + index + '"]' );
+				$item.find( '.sp-progress-bar-wrap' ).addClass( 'is-processing' );
+				$item.find( '.sp-progress-bar' ).css( 'width', '100%' ).attr( 'aria-valuenow', 100 );
+				$item.find( '.sp-file-status' ).text( labels.processing );
+			}
+
+			function clearProcessing( index ) {
+				var $item = $list.find( '.statement-processor-file-progress-item[data-index="' + index + '"]' );
+				$item.find( '.sp-progress-bar-wrap' ).removeClass( 'is-processing' );
+			}
+
+			function uploadNext() {
+				if ( currentIndex >= totalFiles ) {
+					$btn.prop( 'disabled', false ).removeClass( 'is-busy' );
+					return;
+				}
+				var file = files[ currentIndex ];
+				var formData = new FormData();
+				formData.append( 'action', 'statement_processor_upload_one_file' );
+				formData.append( 'statement_processor_upload_nonce', statementProcessorAdmin.nonce );
+				formData.append( 'session_id', sessionId );
+				formData.append( 'file_index', currentIndex );
+				formData.append( 'total_files', totalFiles );
+				formData.append( 'statement_processor_source', sourceVal );
+				if ( sourceVal === 'add_new' ) {
+					formData.append( 'statement_processor_source_new', $( '#statement_processor_source_new' ).val().trim() );
+				}
+				formData.append( 'statement_processor_file', file );
+
+				setStatus( currentIndex, labels.uploading, false );
+				setUploadProgress( currentIndex, 0 );
+				clearProcessing( currentIndex );
+
+				var xhr = new XMLHttpRequest();
+				xhr.open( 'POST', statementProcessorAdmin.ajaxUrl );
+
+				xhr.upload.addEventListener( 'progress', function ( ev ) {
+					if ( ev.lengthComputable && ev.total > 0 ) {
+						var pct = ( ev.loaded / ev.total ) * 100;
+						setUploadProgress( currentIndex, pct );
+						if ( pct >= 100 ) {
+							setProcessing( currentIndex );
+						}
+					}
+				} );
+
+				xhr.addEventListener( 'load', function () {
+					clearProcessing( currentIndex );
+					var res;
+					try {
+						res = JSON.parse( xhr.responseText );
+					} catch ( err ) {
+						setStatus( currentIndex, labels.error + ': ' + ( xhr.statusText || 'Invalid response' ), true );
+						clearProcessing( currentIndex );
+						$btn.prop( 'disabled', false ).removeClass( 'is-busy' );
+						return;
+					}
+					if ( res.success && res.data ) {
+						clearProcessing( currentIndex );
+						setStatus( currentIndex, labels.done, false );
+						setUploadProgress( currentIndex, 100 );
+						if ( res.data.redirectUrl ) {
+							window.location.href = res.data.redirectUrl;
+							return;
+						}
+						currentIndex += 1;
+						uploadNext();
+					} else {
+						clearProcessing( currentIndex );
+						setStatus( currentIndex, labels.error + ( res.data && res.data.message ? ': ' + res.data.message : '' ), true );
+						$btn.prop( 'disabled', false ).removeClass( 'is-busy' );
+					}
+				} );
+
+				xhr.addEventListener( 'error', function () {
+					clearProcessing( currentIndex );
+					setStatus( currentIndex, labels.error + ': ' + ( xhr.statusText || 'Network error' ), true );
+					$btn.prop( 'disabled', false ).removeClass( 'is-busy' );
+				} );
+
+				xhr.send( formData );
+			}
+
+			uploadNext();
+		} );
+
+		// Review form: Import selected via AJAX (batch) with spinner and progress.
+		$( '#statement-processor-review-form' ).on( 'submit', function ( e ) {
+			e.preventDefault();
+			var $form = $( this );
+			var $btn = $( '#statement_processor_import_btn' );
+			var $progress = $( '#statement_processor_import_progress' );
+			var checked = $form.find( 'tbody input[name="include[]"]:checked' );
+			if ( ! checked.length ) {
+				alert( 'Please select at least one transaction to import.' );
+				return false;
+			}
+			var nonce = $form.find( 'input[name="statement_processor_import_nonce"]' ).val();
+			var reviewKey = $form.find( 'input[name="statement_processor_review_key"]' ).val();
+			if ( ! nonce || ! reviewKey ) {
+				alert( 'Session expired. Please refresh the page and upload your files again.' );
+				return false;
+			}
+			var ajaxUrl = $form.data( 'ajaxUrl' ) || ( typeof statementProcessorAdmin !== 'undefined' && statementProcessorAdmin.ajaxUrl ? statementProcessorAdmin.ajaxUrl : '' );
+			if ( ! ajaxUrl ) {
+				alert( 'Import is not available. Please refresh the page.' );
+				return false;
+			}
+			// Flush any active inline edits into hidden inputs so edits are included (blur may not have fired).
+			$form.find( '.sp-edit-input' ).each( function () {
+				var $input = $( this );
+				var $cell = $input.closest( 'td.sp-editable' );
+				if ( $cell.length ) {
+					var idx = $cell.data( 'index' );
+					var field = $cell.data( 'field' );
+					var val = $input.val();
+					if ( field === 'description' ) {
+						val = val.trim();
+					} else {
+						val = val.trim();
+						if ( field === 'time' && ! val ) { val = ''; }
+					}
+					$form.find( 'input[name="tx[' + idx + '][' + field + ']"]' ).val( val );
+				}
+			} );
+			var totalToImport = checked.length;
+			var batchSize = 50;
+			var indices = checked.map( function () { return parseInt( $( this ).val(), 10 ); } ).get();
+			var importLabel = ( typeof statementProcessorAdmin !== 'undefined' && statementProcessorAdmin.importLabel ) ? statementProcessorAdmin.importLabel : 'Importing…';
+			var progressLabel = ( typeof statementProcessorAdmin !== 'undefined' && statementProcessorAdmin.importProgressLabel ) ? statementProcessorAdmin.importProgressLabel : 'Importing… %s / %s';
+			function buildFormDataForBatch( batchIndices ) {
+				var txBatch = {};
+				batchIndices.indices.forEach( function ( idx ) {
+					txBatch[ idx ] = {
+						date: $form.find( 'input[name="tx[' + idx + '][date]"]' ).val() || '',
+						time: $form.find( 'input[name="tx[' + idx + '][time]"]' ).val() || '',
+						description: $form.find( 'input[name="tx[' + idx + '][description]"]' ).val() || '',
+						amount: $form.find( 'input[name="tx[' + idx + '][amount]"]' ).val() || '',
+						origination: $form.find( 'input[name="tx[' + idx + '][origination]"]' ).val() || '',
+						origination_stored_name: $form.find( 'input[name="tx[' + idx + '][origination_stored_name]"]' ).val() || '',
+						source_term_id: $form.find( 'select[name="tx[' + idx + '][source_term_id]"]' ).val() || '',
+						source_new: $form.find( 'input[name="tx[' + idx + '][source_new]"]' ).val() || ''
+					};
+				} );
+				var fd = new FormData();
+				fd.append( 'action', 'statement_processor_import_batch' );
+				fd.append( 'statement_processor_import_nonce', nonce );
+				fd.append( 'statement_processor_review_key', reviewKey );
+				fd.append( 'batch_number', batchIndices.batchIndex );
+				fd.append( 'total_batches', batchIndices.totalBatches );
+				fd.append( 'tx_batch', JSON.stringify( txBatch ) );
+				batchIndices.indices.forEach( function ( idx ) {
+					fd.append( 'include[]', idx );
+				} );
+				return fd;
+			}
+			var batches = [];
+			for ( var b = 0; b < indices.length; b += batchSize ) {
+				batches.push( { indices: indices.slice( b, b + batchSize ), batchIndex: batches.length, totalBatches: 0 } );
+			}
+			var i;
+			for ( i = 0; i < batches.length; i++ ) {
+				batches[ i ].batchIndex = i;
+				batches[ i ].totalBatches = batches.length;
+			}
+			$btn.prop( 'disabled', true ).addClass( 'is-busy' ).data( 'original-html', $btn.html() );
+			$btn.html( '<span class="statement-processor-spinner" aria-hidden="true"></span> ' + importLabel );
+			$progress.show().text( progressLabel.replace( '%s', '0' ).replace( '%s', String( totalToImport ) ) );
+			var cumulativeImported = 0;
+			var batchIndex = 0;
+			function sendNextBatch() {
+				if ( batchIndex >= batches.length ) {
+					$btn.prop( 'disabled', false ).removeClass( 'is-busy' ).html( $btn.data( 'original-html' ) );
+					$progress.hide();
+					return;
+				}
+				var batch = batches[ batchIndex ];
+				var formData = buildFormDataForBatch( batch );
+				var batchUrl = ajaxUrl + ( ajaxUrl.indexOf( '?' ) >= 0 ? '&' : '?' ) + 'action=statement_processor_import_batch';
+				$.ajax( {
+					url: batchUrl,
+					type: 'POST',
+					data: formData,
+					processData: false,
+					contentType: false,
+					dataType: 'json',
+					headers: {
+						'X-Requested-With': 'XMLHttpRequest'
+					}
+				} ).done( function ( res ) {
+					if ( res.success && res.data ) {
+						cumulativeImported += ( res.data.imported || 0 ) + ( res.data.skipped || 0 );
+						$progress.text( progressLabel.replace( '%s', String( cumulativeImported ) ).replace( '%s', String( totalToImport ) ) );
+						if ( res.data.done && res.data.redirect_url ) {
+							window.location.href = res.data.redirect_url;
+							return;
+						}
+						batchIndex += 1;
+						sendNextBatch();
+					} else {
+						$progress.text( res.data && res.data.message ? res.data.message : 'Import failed.' ).css( 'color', '#d63638' );
+						$btn.prop( 'disabled', false ).removeClass( 'is-busy' ).html( $btn.data( 'original-html' ) );
+					}
+				} ).fail( function ( xhr, textStatus, errorThrown ) {
+					var msg = 'Import failed.';
+					if ( xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message ) {
+						msg = xhr.responseJSON.data.message;
+					} else if ( textStatus === 'parsererror' && xhr.responseText ) {
+						msg = 'Server returned an invalid response. Please try again or refresh the page.';
+					} else if ( xhr.statusText ) {
+						msg = xhr.statusText;
+					}
+					if ( window.console && window.console.group ) {
+						window.console.group( 'Statement Processor import: debug' );
+						window.console.log( 'Request URL:', batchUrl );
+						window.console.log( 'Response status:', xhr.status, xhr.statusText );
+						window.console.log( 'Response URL (after redirects):', xhr.responseURL || '(same as request)' );
+						window.console.log( 'textStatus:', textStatus, 'errorThrown:', errorThrown );
+						window.console.log( 'Response length:', ( xhr.responseText && xhr.responseText.length ) || 0 );
+						if ( xhr.responseText ) {
+							window.console.log( 'Response preview (first 500 chars):', xhr.responseText.substring( 0, 500 ) );
+						}
+						window.console.groupEnd();
+					}
+					$progress.text( msg ).css( 'color', '#d63638' );
+					$btn.prop( 'disabled', false ).removeClass( 'is-busy' ).html( $btn.data( 'original-html' ) );
+				} );
+			}
+			batchIndex = 0;
+			sendNextBatch();
 		} );
 
 		// Review table: Select all / deselect all.
@@ -154,5 +414,47 @@
 			var isAddNew = $sel.val() === 'add_new';
 			$sel.siblings( '.sp-source-new-wrap' ).toggle( isAddNew );
 		} );
+
+		// Transaction edit: Suggest category button (only when localized data exists).
+		var $suggestBtn = $( '#sp_suggest_category_btn' );
+		if ( $suggestBtn.length && typeof statementProcessorAdmin !== 'undefined' && statementProcessorAdmin.suggestCategoryNonce ) {
+			var $status = $( '#sp_suggest_category_status' );
+			$suggestBtn.on( 'click', function () {
+				var description = $( '#sp_meta_description' ).val();
+				if ( ! description || ! description.trim() ) {
+					$status.text( '' ).css( 'color', '' );
+					return;
+				}
+				$suggestBtn.prop( 'disabled', true );
+				$status.text( '' ).css( 'color', '' );
+				$.post(
+					statementProcessorAdmin.ajaxUrl,
+					{
+						action: 'sp_suggest_category',
+						nonce: statementProcessorAdmin.suggestCategoryNonce,
+						description: description.trim()
+					}
+				).done( function ( res ) {
+					if ( res.success && res.data && res.data.term_id ) {
+						var termId = parseInt( res.data.term_id, 10 );
+						var $cb = $( 'input[name="tax_input[sp-category][]"][value="' + termId + '"]' );
+						if ( $cb.length ) {
+							$cb.prop( 'checked', true );
+							$( '#sp_category_was_suggested' ).val( '1' );
+							$status.text( res.data.message || 'Category suggested.' ).css( 'color', 'green' );
+						} else {
+							$status.text( res.data.message || 'Category suggested.' ).css( 'color', 'green' );
+							$( '#sp_category_was_suggested' ).val( '1' );
+						}
+					} else {
+						$status.text( res.data && res.data.message ? res.data.message : 'No category suggested.' ).css( 'color', '#666' );
+					}
+				} ).fail( function () {
+					$status.text( 'Request failed.' ).css( 'color', 'red' );
+				} ).always( function () {
+					$suggestBtn.prop( 'disabled', false );
+				} );
+			} );
+		}
 	} );
 }( jQuery ) );

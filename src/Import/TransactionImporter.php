@@ -7,6 +7,8 @@
 
 namespace StatementProcessor\Import;
 
+use StatementProcessor\Admin\SettingsPage;
+use StatementProcessor\Classification\TransactionClassifier;
 use StatementProcessor\Plugin;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -37,6 +39,16 @@ class TransactionImporter {
 	 * Meta key for source filename (origination).
 	 */
 	const META_ORIGINATION = '_origination';
+
+	/**
+	 * Meta key for stored source file name (in uploads/scratch) for linking.
+	 */
+	const META_ORIGINATION_FILE = '_origination_file';
+
+	/**
+	 * Meta key indicating classification has been attempted (AI or automation) for this transaction.
+	 */
+	const META_CATEGORY_ATTEMPTED = '_sp_category_attempted';
 
 	/**
 	 * Description phrases that are not transactions (balance lines, headers, etc.).
@@ -94,6 +106,7 @@ class TransactionImporter {
 		'interest credit',
 		'direct deposit',
 		'payroll',
+		'wave',  // Wave (payments/payroll) credits on statements.
 		'transfer from',
 		'payment received',
 		'credit adjustment',
@@ -103,6 +116,15 @@ class TransactionImporter {
 		'ach deposit',
 		'check deposit',
 		'pos credit',
+	];
+
+	/**
+	 * Phrases that force a transaction to be treated as a debit (money out), even if it matches a credit phrase.
+	 *
+	 * @var string[]
+	 */
+	private static $debit_override_phrases = [
+		'payroll fees',  // e.g. "Wave Payroll Fees" — fees paid out, not income.
 	];
 
 	/**
@@ -119,11 +141,12 @@ class TransactionImporter {
 			$description  = isset( $t['description'] ) ? sanitize_text_field( $t['description'] ) : '';
 			$amount       = $this->normalize_amount_sign( $amount, $description );
 			$row          = [
-				'date'        => isset( $t['date'] ) ? $t['date'] : '',
-				'time'        => isset( $t['time'] ) && $t['time'] !== '' ? $t['time'] : '00:00:00',
-				'description' => $description,
-				'amount'      => $amount,
-				'origination' => isset( $t['origination'] ) ? sanitize_file_name( $t['origination'] ) : '',
+				'date'                    => isset( $t['date'] ) ? $t['date'] : '',
+				'time'                    => isset( $t['time'] ) && $t['time'] !== '' ? $t['time'] : '00:00:00',
+				'description'             => $description,
+				'amount'                  => $amount,
+				'origination'             => isset( $t['origination'] ) ? sanitize_text_field( $t['origination'] ) : '',
+				'origination_stored_name' => isset( $t['origination_stored_name'] ) ? sanitize_file_name( $t['origination_stored_name'] ) : '',
 			];
 			if ( isset( $t['source_term_id'] ) ) {
 				$row['source_term_id'] = (int) $t['source_term_id'];
@@ -149,6 +172,7 @@ class TransactionImporter {
 		$imported = 0;
 		$skipped  = 0;
 		$errors   = [];
+		$skipped_transactions = [];
 
 		foreach ( $transactions as $t ) {
 			$row_source_term_id = isset( $t['source_term_id'] ) ? (int) $t['source_term_id'] : null;
@@ -162,7 +186,8 @@ class TransactionImporter {
 			$description = isset( $t['description'] ) ? sanitize_text_field( $t['description'] ) : '';
 			$amount       = isset( $t['amount'] ) ? $this->normalize_amount( $t['amount'] ) : '0';
 			$amount       = $this->normalize_amount_sign( $amount, $description );
-			$origination  = isset( $t['origination'] ) ? sanitize_file_name( $t['origination'] ) : '';
+			$origination   = isset( $t['origination'] ) ? sanitize_text_field( $t['origination'] ) : '';
+			$origination_file = isset( $t['origination_stored_name'] ) ? sanitize_file_name( $t['origination_stored_name'] ) : '';
 
 			if ( empty( $date ) || $description === '' ) {
 				continue;
@@ -175,6 +200,12 @@ class TransactionImporter {
 			$transaction_id = $this->generate_transaction_id( $date, $time, $description, $amount );
 			if ( $this->find_existing_by_transaction_id( $transaction_id ) ) {
 				++$skipped;
+				$skipped_transactions[] = [
+					'date'        => $date,
+					'time'        => $time,
+					'description' => $description,
+					'amount'      => $amount,
+				];
 				continue;
 			}
 
@@ -209,11 +240,30 @@ class TransactionImporter {
 			if ( $origination !== '' ) {
 				update_post_meta( $post_id, self::META_ORIGINATION, $origination );
 			}
+			if ( $origination_file !== '' ) {
+				update_post_meta( $post_id, self::META_ORIGINATION_FILE, $origination_file );
+			}
 			wp_set_object_terms( $post_id, (int) $term_id, Plugin::taxonomy_source() );
+
+			$opts = SettingsPage::get_options();
+			if ( ! empty( $opts['auto_categorize_on_import'] ) ) {
+				$classifier = new TransactionClassifier();
+				$category_term_id = $classifier->classify( $description );
+				if ( $category_term_id !== null ) {
+					wp_set_object_terms( $post_id, $category_term_id, Plugin::taxonomy_category() );
+				}
+				update_post_meta( $post_id, self::META_CATEGORY_ATTEMPTED, '1' );
+			}
+
 			++$imported;
 		}
 
-		return [ 'imported' => $imported, 'skipped' => $skipped, 'errors' => $errors ];
+		return [
+			'imported'            => $imported,
+			'skipped'             => $skipped,
+			'errors'              => $errors,
+			'skipped_transactions' => $skipped_transactions,
+		];
 	}
 
 	/**
@@ -259,7 +309,31 @@ class TransactionImporter {
 	}
 
 	/**
-	 * Normalize amount sign for consistency: credits/deposits/payments = positive, all others = negative.
+	 * Whether the description matches a debit override (money out), taking precedence over credit phrases.
+	 *
+	 * @param string $description Sanitized description.
+	 * @return bool
+	 */
+	private function is_debit_override( $description ) {
+		$normalized = strtolower( trim( $description ) );
+		if ( $normalized === '' ) {
+			return false;
+		}
+		$phrases = apply_filters( 'statement_processor_debit_override_phrases', self::$debit_override_phrases );
+		foreach ( (array) $phrases as $phrase ) {
+			$phrase = strtolower( trim( (string) $phrase ) );
+			if ( $phrase !== '' && strpos( $normalized, $phrase ) !== false ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Normalize amount sign. When the statement identifies debits with a minus and credits without,
+	 * the parser passes signed amounts; we preserve that sign. The same description (e.g. "Amazon")
+	 * can be either a purchase (debit, "-" on statement) or a refund (credit, no "-"); we use the
+	 * value identifier (the amount's existing "-") to decide, not the description.
 	 *
 	 * @param string $amount      Amount string (e.g. "50.00" or "-50.00").
 	 * @param string $description Transaction description.
@@ -270,8 +344,16 @@ class TransactionImporter {
 		if ( $num === 0.0 ) {
 			return '0.00';
 		}
-		$is_credit = $this->is_credit_or_deposit( $description );
-		if ( $is_credit ) {
+		$preserve_sign = apply_filters( 'statement_processor_preserve_amount_sign_from_statement', true );
+		if ( $preserve_sign ) {
+			// Use the amount's sign (value identifier): existing "-" = debit, no "-" = credit.
+			$num = $num < 0 ? -1 * abs( $num ) : abs( $num );
+			return number_format( $num, 2, '.', '' );
+		}
+		// Fallback: infer from description when parser does not provide sign.
+		if ( $this->is_debit_override( $description ) ) {
+			$num = -1 * abs( $num );
+		} elseif ( $this->is_credit_or_deposit( $description ) ) {
 			$num = abs( $num );
 		} else {
 			$num = -1 * abs( $num );

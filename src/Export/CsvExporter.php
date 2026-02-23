@@ -77,7 +77,7 @@ class CsvExporter {
 
 		// UTF-8 BOM for Excel.
 		fprintf( $out, "\xEF\xBB\xBF" );
-		fputcsv( $out, [ 'Date', 'Time', 'Description', 'Amount', 'Source', 'Transaction ID' ] );
+		fputcsv( $out, [ 'Date', 'Time', 'Description', 'Amount', 'Source', 'Category', 'Transaction ID' ] );
 
 		foreach ( $ids as $post_id ) {
 			$post = get_post( $post_id );
@@ -91,7 +91,9 @@ class CsvExporter {
 			$tx_id   = get_post_meta( $post_id, TransactionImporter::META_TRANSACTION_ID, true );
 			$terms   = get_the_terms( $post_id, Plugin::taxonomy_source() );
 			$source  = ( $terms && ! is_wp_error( $terms ) && isset( $terms[0] ) ) ? $terms[0]->name : '';
-			fputcsv( $out, [ $date, $time, $desc, $amount, $source, $tx_id ] );
+			$cat_terms = get_the_terms( $post_id, Plugin::taxonomy_category() );
+			$category  = ( $cat_terms && ! is_wp_error( $cat_terms ) && isset( $cat_terms[0] ) ) ? $cat_terms[0]->name : '';
+			fputcsv( $out, [ $date, $time, $desc, $amount, $source, $category, $tx_id ] );
 		}
 
 		fclose( $out );

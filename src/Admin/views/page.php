@@ -3,7 +3,6 @@
  * Statement Processor admin page template.
  *
  * @package StatementProcessor
- * @var string   $export_nonce
  * @var \WP_Term[] $sources
  * @var bool    $show_review
  * @var array|null $review_data  ['transactions' => array, 'source_name' => string, 'source_term_id' => int]
@@ -19,7 +18,37 @@ if ( $notice ) {
 	delete_transient( 'statement_processor_notice' );
 	echo '<div class="notice notice-success is-dismissible"><p>' . esc_html( $notice ) . '</p></div>';
 }
+$skipped_duplicates = get_transient( 'statement_processor_skipped_duplicates' );
+if ( is_array( $skipped_duplicates ) && ! empty( $skipped_duplicates ) ) {
+	delete_transient( 'statement_processor_skipped_duplicates' );
+}
 ?>
+
+<?php if ( is_array( $skipped_duplicates ) && ! empty( $skipped_duplicates ) ) : ?>
+	<details class="statement-processor-skipped-duplicates" style="margin-top: 0.5em;">
+		<summary><?php echo esc_html( sprintf( __( 'View skipped duplicates (%d)', 'statement-processor' ), count( $skipped_duplicates ) ) ); ?></summary>
+		<table class="wp-list-table widefat fixed striped" style="margin-top: 0.5em;">
+			<thead>
+				<tr>
+					<th scope="col"><?php esc_html_e( 'Date', 'statement-processor' ); ?></th>
+					<th scope="col"><?php esc_html_e( 'Time', 'statement-processor' ); ?></th>
+					<th scope="col"><?php esc_html_e( 'Description', 'statement-processor' ); ?></th>
+					<th scope="col" class="column-amount"><?php esc_html_e( 'Amount', 'statement-processor' ); ?></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( $skipped_duplicates as $row ) : ?>
+					<tr>
+						<td><?php echo esc_html( isset( $row['date'] ) ? $row['date'] : '—' ); ?></td>
+						<td><?php echo esc_html( isset( $row['time'] ) && $row['time'] !== '00:00:00' ? $row['time'] : '—' ); ?></td>
+						<td><?php echo esc_html( isset( $row['description'] ) ? $row['description'] : '—' ); ?></td>
+						<td class="column-amount"><?php echo esc_html( isset( $row['amount'] ) ? $row['amount'] : '—' ); ?></td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+	</details>
+<?php endif; ?>
 
 <div class="wrap statement-processor-admin">
 	<h1><?php esc_html_e( 'Import statements', 'statement-processor' ); ?></h1>
@@ -41,7 +70,7 @@ if ( $notice ) {
 				?>
 			</p>
 
-			<form method="post" action="" id="statement-processor-review-form" class="statement-processor-review-form">
+			<form method="post" action="" id="statement-processor-review-form" class="statement-processor-review-form" data-ajax-url="<?php echo esc_attr( admin_url( 'admin-ajax.php' ) ); ?>">
 				<?php wp_nonce_field( 'statement_processor_import_selected', 'statement_processor_import_nonce' ); ?>
 				<input type="hidden" name="statement_processor_review_key" value="<?php echo esc_attr( $review_key ); ?>" />
 
@@ -69,6 +98,7 @@ if ( $notice ) {
 							$desc_val   = isset( $t['description'] ) ? $t['description'] : '';
 							$amt_val    = isset( $t['amount'] ) ? $t['amount'] : '';
 							$orig_val   = isset( $t['origination'] ) ? $t['origination'] : '';
+							$orig_stored = isset( $t['origination_stored_name'] ) ? $t['origination_stored_name'] : '';
 							$source_id   = isset( $t['source_term_id'] ) ? (int) $t['source_term_id'] : ( isset( $review_data['source_term_id'] ) ? (int) $review_data['source_term_id'] : 0 );
 							$source_name = isset( $t['source_name'] ) ? $t['source_name'] : '';
 							$detect_auto = ( isset( $review_data['source_term_id'] ) ? (int) $review_data['source_term_id'] : 0 ) === 0;
@@ -114,14 +144,16 @@ if ( $notice ) {
 									<input type="hidden" name="tx[<?php echo (int) $index; ?>][description]" value="<?php echo esc_attr( $desc_val ); ?>" />
 									<input type="hidden" name="tx[<?php echo (int) $index; ?>][amount]" value="<?php echo esc_attr( $amt_val ); ?>" />
 									<input type="hidden" name="tx[<?php echo (int) $index; ?>][origination]" value="<?php echo esc_attr( $orig_val ); ?>" />
+									<input type="hidden" name="tx[<?php echo (int) $index; ?>][origination_stored_name]" value="<?php echo esc_attr( $orig_stored ); ?>" />
 								</td>
 							</tr>
 						<?php endforeach; ?>
 					</tbody>
 				</table>
 
-				<p class="submit">
-					<button type="submit" class="button button-primary"><?php esc_html_e( 'Import selected', 'statement-processor' ); ?></button>
+				<p class="submit statement-processor-import-submit">
+					<button type="submit" class="button button-primary statement-processor-import-btn" id="statement_processor_import_btn"><?php esc_html_e( 'Import selected', 'statement-processor' ); ?></button>
+					<span class="statement-processor-import-progress" id="statement_processor_import_progress" aria-live="polite" style="display: none;"></span>
 					<a href="<?php echo esc_url( admin_url( 'admin.php?page=' . \StatementProcessor\Admin\AdminPage::PAGE_SLUG ) ); ?>" class="button"><?php esc_html_e( 'Cancel', 'statement-processor' ); ?></a>
 				</p>
 			</form>
@@ -164,75 +196,16 @@ if ( $notice ) {
 							<span class="statement-processor-file-dropzone-label" id="statement_processor_file_dropzone_hint"><?php esc_html_e( 'Drag and drop PDF or CSV files here, or click to browse.', 'statement-processor' ); ?></span>
 							<span class="statement-processor-file-dropzone-count" id="statement_processor_file_count" aria-live="polite"></span>
 						</div>
+						<div class="statement-processor-upload-progress" id="statement_processor_upload_progress" aria-live="polite" style="display: none;">
+							<p class="statement-processor-upload-progress-title"><?php esc_html_e( 'Upload and processing progress', 'statement-processor' ); ?></p>
+							<ul class="statement-processor-file-progress-list" id="statement_processor_file_progress_list"></ul>
+						</div>
 					</td>
 				</tr>
 			</table>
 
 			<p class="submit">
 				<button type="submit" class="button button-primary statement-processor-upload-btn" id="statement_processor_upload_btn"><?php esc_html_e( 'Upload and review', 'statement-processor' ); ?></button>
-			</p>
-		</form>
-	</div>
-
-	<hr />
-
-	<div class="statement-processor-section">
-		<h2><?php esc_html_e( 'Export to CSV', 'statement-processor' ); ?></h2>
-		<p class="description"><?php esc_html_e( 'Filter by month/year and source, then download a CSV file.', 'statement-processor' ); ?></p>
-
-		<form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>" class="statement-processor-export-form">
-			<input type="hidden" name="page" value="<?php echo esc_attr( \StatementProcessor\Admin\AdminPage::PAGE_SLUG ); ?>" />
-			<input type="hidden" name="statement_processor_export" value="1" />
-			<?php wp_nonce_field( 'statement_processor_export', '_wpnonce', false ); ?>
-
-			<table class="form-table">
-				<tr>
-					<th scope="row">
-						<label for="export_year"><?php esc_html_e( 'Year', 'statement-processor' ); ?></label>
-					</th>
-					<td>
-						<?php
-						$current_year = (int) gmdate( 'Y' );
-						$years        = range( $current_year, $current_year - 10 );
-						?>
-						<select name="export_year" id="export_year">
-							<option value=""><?php esc_html_e( 'All', 'statement-processor' ); ?></option>
-							<?php foreach ( $years as $y ) : ?>
-								<option value="<?php echo (int) $y; ?>"><?php echo (int) $y; ?></option>
-							<?php endforeach; ?>
-						</select>
-					</td>
-				</tr>
-				<tr>
-					<th scope="row">
-						<label for="export_month"><?php esc_html_e( 'Month', 'statement-processor' ); ?></label>
-					</th>
-					<td>
-						<select name="export_month" id="export_month">
-							<option value=""><?php esc_html_e( 'All', 'statement-processor' ); ?></option>
-							<?php for ( $m = 1; $m <= 12; $m++ ) : ?>
-								<option value="<?php echo (int) $m; ?>"><?php echo esc_html( gmdate( 'F', mktime( 0, 0, 0, $m, 1 ) ) ); ?></option>
-							<?php endfor; ?>
-						</select>
-					</td>
-				</tr>
-				<tr>
-					<th scope="row">
-						<label for="export_source"><?php esc_html_e( 'Source', 'statement-processor' ); ?></label>
-					</th>
-					<td>
-						<select name="export_source" id="export_source">
-							<option value=""><?php esc_html_e( 'All sources', 'statement-processor' ); ?></option>
-							<?php foreach ( $sources as $src ) : ?>
-								<option value="<?php echo esc_attr( (string) $src->term_id ); ?>"><?php echo esc_html( $src->name ); ?></option>
-							<?php endforeach; ?>
-						</select>
-					</td>
-				</tr>
-			</table>
-
-			<p class="submit">
-				<button type="submit" class="button button-secondary"><?php esc_html_e( 'Download CSV', 'statement-processor' ); ?></button>
 			</p>
 		</form>
 	</div>
