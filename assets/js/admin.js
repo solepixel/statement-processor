@@ -234,7 +234,10 @@
 				return false;
 			}
 			var ajaxUrl = $form.data( 'ajaxUrl' ) || ( typeof statementProcessorAdmin !== 'undefined' && statementProcessorAdmin.ajaxUrl ? statementProcessorAdmin.ajaxUrl : '' );
-			if ( ! ajaxUrl ) {
+			var importBatchUrl = ( typeof statementProcessorAdmin !== 'undefined' && statementProcessorAdmin.importBatchRestUrl )
+				? statementProcessorAdmin.importBatchRestUrl
+				: ( ajaxUrl ? ajaxUrl + ( ajaxUrl.indexOf( '?' ) >= 0 ? '&' : '?' ) + 'action=statement_processor_import_batch' : '' );
+			if ( ! importBatchUrl ) {
 				alert( 'Import is not available. Please refresh the page.' );
 				return false;
 			}
@@ -308,17 +311,18 @@
 				}
 				var batch = batches[ batchIndex ];
 				var formData = buildFormDataForBatch( batch );
-				var batchUrl = ajaxUrl + ( ajaxUrl.indexOf( '?' ) >= 0 ? '&' : '?' ) + 'action=statement_processor_import_batch';
+				var ajaxHeaders = { 'X-Requested-With': 'XMLHttpRequest' };
+				if ( typeof statementProcessorAdmin !== 'undefined' && statementProcessorAdmin.restNonce ) {
+					ajaxHeaders[ 'X-WP-Nonce' ] = statementProcessorAdmin.restNonce;
+				}
 				$.ajax( {
-					url: batchUrl,
+					url: importBatchUrl,
 					type: 'POST',
 					data: formData,
 					processData: false,
 					contentType: false,
 					dataType: 'json',
-					headers: {
-						'X-Requested-With': 'XMLHttpRequest'
-					}
+					headers: ajaxHeaders
 				} ).done( function ( res ) {
 					if ( res.success && res.data ) {
 						cumulativeImported += ( res.data.imported || 0 ) + ( res.data.skipped || 0 );
@@ -344,7 +348,7 @@
 					}
 					if ( window.console && window.console.group ) {
 						window.console.group( 'Statement Processor import: debug' );
-						window.console.log( 'Request URL:', batchUrl );
+						window.console.log( 'Request URL:', importBatchUrl );
 						window.console.log( 'Response status:', xhr.status, xhr.statusText );
 						window.console.log( 'Response URL (after redirects):', xhr.responseURL || '(same as request)' );
 						window.console.log( 'textStatus:', textStatus, 'errorThrown:', errorThrown );

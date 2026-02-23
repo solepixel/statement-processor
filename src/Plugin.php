@@ -94,10 +94,12 @@ final class Plugin {
 
 		add_action( 'init', [ $this, 'register_cpt_and_taxonomy' ], 0 );
 
+		// UploadHandler registers REST import-batch route on all requests; admin hooks only when is_admin().
+		$this->upload_handler = new Admin\UploadHandler();
+
 		if ( is_admin() ) {
 			$this->admin_page           = new Admin\AdminPage();
 			new Admin\ExportPage();
-			$this->upload_handler       = new Admin\UploadHandler();
 			$this->export_handler       = new Admin\ExportHandler();
 			$this->transaction_admin_ui = new Admin\TransactionAdminUI();
 			new Admin\SettingsPage();

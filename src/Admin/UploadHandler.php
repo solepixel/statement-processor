@@ -37,14 +37,129 @@ class UploadHandler {
 	const UPLOAD_SESSION_EXPIRY = 600;
 
 	/**
-	 * Constructor; registers form handling.
+	 * REST namespace for import batch (avoids admin-ajax returning HTML in some environments).
+	 */
+	const REST_NAMESPACE = 'statement-processor/v1';
+
+	/**
+	 * Constructor; registers form handling and REST route for import batch.
 	 */
 	public function __construct() {
-		add_action( 'admin_init', [ $this, 'handle_import_selected' ], 5 );
-		add_action( 'admin_init', [ $this, 'handle_upload' ], 10 );
-		add_action( 'admin_init', [ $this, 'log_ajax_request_action' ], 0 );
-		add_action( 'wp_ajax_statement_processor_upload_one_file', [ $this, 'ajax_upload_one_file' ] );
-		add_action( 'wp_ajax_statement_processor_import_batch', [ $this, 'ajax_import_batch' ] );
+		add_action( 'rest_api_init', [ $this, 'register_rest_import_batch' ] );
+		if ( is_admin() ) {
+			add_action( 'admin_init', [ $this, 'handle_import_selected' ], 5 );
+			add_action( 'admin_init', [ $this, 'handle_upload' ], 10 );
+			add_action( 'admin_init', [ $this, 'log_ajax_request_action' ], 0 );
+			add_action( 'wp_ajax_statement_processor_upload_one_file', [ $this, 'ajax_upload_one_file' ] );
+			add_action( 'wp_ajax_statement_processor_import_batch', [ $this, 'ajax_import_batch' ] );
+		}
+	}
+
+	/**
+	 * Register REST route for import batch (returns JSON only, no admin HTML).
+	 */
+	public function register_rest_import_batch() {
+		register_rest_route(
+			self::REST_NAMESPACE,
+			'/import-batch',
+			[
+				'methods'             => 'POST',
+				'permission_callback' => function () {
+					return current_user_can( 'manage_options' );
+				},
+				'callback'            => [ $this, 'rest_import_batch' ],
+			]
+		);
+	}
+
+	/**
+	 * REST API handler for import batch; same logic as ajax_import_batch, returns JSON response.
+	 *
+	 * @param \WP_REST_Request $request Request (params read from $_POST for FormData).
+	 * @return \WP_REST_Response
+	 */
+	public function rest_import_batch( $request ) {
+		$post = isset( $_POST ) && is_array( $_POST ) ? $_POST : [];
+		if ( ! isset( $post['statement_processor_import_nonce'] )
+			|| ! wp_verify_nonce( sanitize_text_field( wp_unslash( $post['statement_processor_import_nonce'] ) ), 'statement_processor_import_selected' ) ) {
+			return new \WP_REST_Response( [ 'success' => false, 'data' => [ 'message' => __( 'Invalid security token.', 'statement-processor' ) ] ], 400 );
+		}
+		$review_key   = isset( $post['statement_processor_review_key'] ) ? sanitize_text_field( wp_unslash( $post['statement_processor_review_key'] ) ) : '';
+		$batch_number = isset( $post['batch_number'] ) ? (int) $post['batch_number'] : 0;
+		$total_batches = isset( $post['total_batches'] ) ? (int) $post['total_batches'] : 0;
+		if ( $review_key === '' || $total_batches < 1 ) {
+			return new \WP_REST_Response( [ 'success' => false, 'data' => [ 'message' => __( 'Invalid request.', 'statement-processor' ) ] ], 400 );
+		}
+		$transient_key = self::REVIEW_TRANSIENT_PREFIX . $review_key;
+		$data          = get_transient( $transient_key );
+		if ( $data === false || ! is_array( $data ) || empty( $data['transactions'] ) ) {
+			return new \WP_REST_Response( [ 'success' => false, 'data' => [ 'message' => __( 'Review session expired or invalid.', 'statement-processor' ) ] ], 400 );
+		}
+		$include = isset( $post['include'] ) && is_array( $post['include'] ) ? array_map( 'absint', $post['include'] ) : [];
+		$tx_post = $this->get_tx_post_from_request();
+		try {
+			$selected = $this->build_selected_transactions( $include, $tx_post, $data );
+		} catch ( \Throwable $e ) {
+			return new \WP_REST_Response( [ 'success' => false, 'data' => [ 'message' => __( 'Error preparing transactions.', 'statement-processor' ) ] ], 500 );
+		}
+		$imported = 0;
+		$skipped  = 0;
+		$errors   = [];
+		$skipped_transactions = [];
+		if ( ! empty( $selected ) ) {
+			try {
+				$importer = new \StatementProcessor\Import\TransactionImporter();
+				$results  = $importer->import( $selected );
+				$imported = isset( $results['imported'] ) ? (int) $results['imported'] : 0;
+				$skipped  = isset( $results['skipped'] ) ? (int) $results['skipped'] : 0;
+				$errors   = isset( $results['errors'] ) && is_array( $results['errors'] ) ? $results['errors'] : [];
+				$skipped_transactions = isset( $results['skipped_transactions'] ) && is_array( $results['skipped_transactions'] ) ? $results['skipped_transactions'] : [];
+			} catch ( \Throwable $e ) {
+				return new \WP_REST_Response( [ 'success' => false, 'data' => [ 'message' => __( 'Error during import.', 'statement-processor' ) ] ], 500 );
+			}
+		}
+		$batch_totals_key = 'statement_processor_batch_totals_' . $review_key;
+		$totals           = get_transient( $batch_totals_key );
+		if ( ! is_array( $totals ) ) {
+			$totals = [ 'imported' => 0, 'skipped' => 0, 'skipped_transactions' => [] ];
+		}
+		$totals['imported'] += $imported;
+		$totals['skipped']  += $skipped;
+		if ( ! empty( $skipped_transactions ) && is_array( $skipped_transactions ) ) {
+			$totals['skipped_transactions'] = array_merge(
+				isset( $totals['skipped_transactions'] ) ? $totals['skipped_transactions'] : [],
+				$skipped_transactions
+			);
+		}
+		set_transient( $batch_totals_key, $totals, self::REVIEW_TRANSIENT_EXPIRY );
+		$is_last = ( $batch_number + 1 ) >= $total_batches;
+		if ( $is_last ) {
+			delete_transient( $transient_key );
+			delete_transient( $batch_totals_key );
+			$this->set_notice( [
+				'imported'             => $totals['imported'],
+				'skipped'              => $totals['skipped'],
+				'errors'               => $errors,
+				'skipped_transactions' => isset( $totals['skipped_transactions'] ) ? $totals['skipped_transactions'] : [],
+			] );
+			return new \WP_REST_Response( [
+				'success' => true,
+				'data'    => [
+					'done'          => true,
+					'redirect_url'  => $this->import_page_url(),
+					'imported'      => $totals['imported'],
+					'skipped'       => $totals['skipped'],
+				],
+			], 200 );
+		}
+		return new \WP_REST_Response( [
+			'success' => true,
+			'data'    => [
+				'done'     => false,
+				'imported' => $imported,
+				'skipped'  => $skipped,
+			],
+		], 200 );
 	}
 
 	/**

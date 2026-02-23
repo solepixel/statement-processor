@@ -16,7 +16,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Creates transaction posts with post_date, meta, and source taxonomy; skips duplicates by _transaction_id.
+ * Creates transaction posts with post_date, meta, and source taxonomy.
+ * Duplicates are only checked against existing DB transactions (previous imports).
+ * Within the same import batch, multiple rows with same date/description/amount are all imported (each gets a unique _transaction_id suffix).
  */
 class TransactionImporter {
 
@@ -174,7 +176,10 @@ class TransactionImporter {
 		$errors   = [];
 		$skipped_transactions = [];
 
-		foreach ( $transactions as $t ) {
+		// Assign unique transaction_ids within this batch so duplicates are only vs existing DB (previous imports).
+		$assigned_ids = $this->assign_transaction_ids_for_batch( $transactions, $source_term_id );
+
+		foreach ( $transactions as $idx => $t ) {
 			$row_source_term_id = isset( $t['source_term_id'] ) ? (int) $t['source_term_id'] : null;
 			$term_id = $row_source_term_id !== null && $row_source_term_id > 0 ? $row_source_term_id : $source_term_id;
 			if ( $term_id === null || $term_id <= 0 ) {
@@ -197,7 +202,7 @@ class TransactionImporter {
 				continue;
 			}
 
-			$transaction_id = $this->generate_transaction_id( $date, $time, $description, $amount );
+			$transaction_id = isset( $assigned_ids[ $idx ] ) ? $assigned_ids[ $idx ] : $this->generate_transaction_id( $date, $time, $description, $amount );
 			if ( $this->find_existing_by_transaction_id( $transaction_id ) ) {
 				++$skipped;
 				$skipped_transactions[] = [
@@ -264,6 +269,41 @@ class TransactionImporter {
 			'errors'              => $errors,
 			'skipped_transactions' => $skipped_transactions,
 		];
+	}
+
+	/**
+	 * Assign transaction_ids for this batch so within-batch duplicates get unique ids (only DB is checked for duplicates).
+	 *
+	 * @param array<int, array{date: string, time?: string, description: string, amount: string|float, source_term_id?: int}> $transactions Same as import().
+	 * @param int|null $source_term_id Same as import().
+	 * @return array<int, string> Index => assigned _transaction_id (only for processable rows).
+	 */
+	private function assign_transaction_ids_for_batch( array $transactions, $source_term_id ) {
+		$base_ids = []; // index => base transaction_id for each processable row.
+		foreach ( $transactions as $idx => $t ) {
+			$row_source_term_id = isset( $t['source_term_id'] ) ? (int) $t['source_term_id'] : null;
+			$term_id = $row_source_term_id !== null && $row_source_term_id > 0 ? $row_source_term_id : $source_term_id;
+			if ( $term_id === null || $term_id <= 0 ) {
+				continue;
+			}
+			$date        = isset( $t['date'] ) ? $t['date'] : '';
+			$time        = isset( $t['time'] ) ? $t['time'] : '00:00:00';
+			$description = isset( $t['description'] ) ? sanitize_text_field( $t['description'] ) : '';
+			$amount      = isset( $t['amount'] ) ? $this->normalize_amount( $t['amount'] ) : '0';
+			$amount      = $this->normalize_amount_sign( $amount, $description );
+			if ( $date === '' || $description === '' || $this->is_excluded_description( $description ) ) {
+				continue;
+			}
+			$base_ids[ $idx ] = $this->generate_transaction_id( $date, $time, $description, $amount );
+		}
+		$occurrence = [];
+		$assigned   = [];
+		foreach ( $base_ids as $idx => $base_id ) {
+			$occurrence[ $base_id ] = isset( $occurrence[ $base_id ] ) ? $occurrence[ $base_id ] + 1 : 1;
+			$n = $occurrence[ $base_id ];
+			$assigned[ $idx ] = $n === 1 ? $base_id : $base_id . '-' . $n;
+		}
+		return $assigned;
 	}
 
 	/**

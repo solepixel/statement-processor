@@ -80,8 +80,10 @@ class AdminPage {
 			'statement-processor-admin',
 			'statementProcessorAdmin',
 			[
-				'ajaxUrl'        => admin_url( 'admin-ajax.php' ),
-				'nonce'          => wp_create_nonce( 'statement_processor_upload' ),
+				'ajaxUrl'            => admin_url( 'admin-ajax.php' ),
+				'importBatchRestUrl' => rest_url( 'statement-processor/v1/import-batch' ),
+				'restNonce'          => wp_create_nonce( 'wp_rest' ),
+				'nonce'              => wp_create_nonce( 'statement_processor_upload' ),
 				'processingText' => __( 'Processing…', 'statement-processor' ),
 				'uploadLabels'       => [
 					'pending'    => __( 'Pending', 'statement-processor' ),

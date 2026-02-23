@@ -69,7 +69,7 @@ Then run `ddev restart` so the web image rebuilds with the package. After that, 
 4. **Export**  
    In the same Import page, use the **Export to CSV** section to set year, month, and source filters, then click **Download CSV**.
 
-Transactions appear under **Transactions** (the `sp-transaction` post type list). Duplicate transactions (same date, description, amount) are skipped on import using `_transaction_id`.
+Transactions appear under **Transactions** (the `sp-transaction` post type list). Duplicate detection is only against **already-imported** transactions (previous imports). Within the same upload/session, multiple rows with the same date/description/amount are all imported; each gets a unique `_transaction_id` so they are not treated as duplicates of each other.
 
 ## Supported statement formats
 
