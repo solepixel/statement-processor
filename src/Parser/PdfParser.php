@@ -120,8 +120,15 @@ class PdfParser {
 		if ( ! empty( $ally_rows ) ) {
 			return $this->filter_ally_junk_transactions( $ally_rows );
 		}
-		// Do not use generic table/line parsers for Ally combined statements — they produce junk (P.O. Box, page numbers, etc.).
+		// For Ally combined statements, fall back to generic parsers then filter junk so user gets some transactions.
 		if ( $is_ally_combined ) {
+			$table_style = $this->parse_table_style_transactions( $text );
+			$line_style  = $this->parse_line_style_transactions( $text );
+			$merged      = array_merge( $table_style, $line_style );
+			$filtered    = $this->filter_ally_junk_transactions( $merged );
+			if ( ! empty( $filtered ) ) {
+				return $filtered;
+			}
 			return [];
 		}
 		$table_style = $this->parse_table_style_transactions( $text );
@@ -598,8 +605,8 @@ class PdfParser {
 				continue;
 			}
 
-			// Start table when we see the header (with or without "Activity" on previous line).
-			if ( ! $in_table && preg_match( '/Date\s+Description\s+Credits\s+Debits\s+Balance/i', $line ) ) {
+			// Start table when we see the full header or just the amount columns header (in case "Date Description" is on previous line).
+			if ( ! $in_table && ( preg_match( '/Date\s+Description\s+Credits\s+Debits\s+Balance/i', $line ) || preg_match( '/Credits\s+Debits\s+Balance/i', $line ) ) ) {
 				$in_table     = true;
 				$current_date = null;
 				$current_desc = [];
