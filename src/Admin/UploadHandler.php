@@ -186,6 +186,15 @@ class UploadHandler {
 	}
 
 	/**
+	 * Discard all output buffers so only our JSON is sent (import batch).
+	 */
+	private function discard_output_buffers() {
+		while ( function_exists( 'ob_get_level' ) && ob_get_level() > 0 ) {
+			ob_end_clean();
+		}
+	}
+
+	/**
 	 * Log debug message when WP_DEBUG_LOG is enabled (for import batch troubleshooting).
 	 *
 	 * @param string $message Message to log.
@@ -213,39 +222,27 @@ class UploadHandler {
 			'action_post'    => isset( $_POST['action'] ) ? sanitize_text_field( wp_unslash( $_POST['action'] ) ) : '',
 			'doing_ajax'     => defined( 'DOING_AJAX' ) && DOING_AJAX,
 		] );
-		// Prevent any stray output (notices, warnings) from breaking JSON response.
-		if ( function_exists( 'ob_start' ) ) {
-			ob_start();
-		}
 		if ( ! isset( $_POST['statement_processor_import_nonce'] ) ||
 			! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['statement_processor_import_nonce'] ) ), 'statement_processor_import_selected' ) ) {
 			$this->log_import_debug( 'ajax_import_batch: nonce check failed' );
-			if ( function_exists( 'ob_get_level' ) && ob_get_level() ) {
-				ob_end_clean();
-			}
+			$this->discard_output_buffers();
 			wp_send_json_error( [ 'message' => __( 'Invalid security token.', 'statement-processor' ) ] );
 		}
 		if ( ! current_user_can( 'manage_options' ) ) {
-			if ( function_exists( 'ob_get_level' ) && ob_get_level() ) {
-				ob_end_clean();
-			}
+			$this->discard_output_buffers();
 			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'statement-processor' ) ] );
 		}
 		$review_key   = isset( $_POST['statement_processor_review_key'] ) ? sanitize_text_field( wp_unslash( $_POST['statement_processor_review_key'] ) ) : '';
 		$batch_number = isset( $_POST['batch_number'] ) ? (int) $_POST['batch_number'] : 0;
 		$total_batches = isset( $_POST['total_batches'] ) ? (int) $_POST['total_batches'] : 0;
 		if ( $review_key === '' || $total_batches < 1 ) {
-			if ( function_exists( 'ob_get_level' ) && ob_get_level() ) {
-				ob_end_clean();
-			}
+			$this->discard_output_buffers();
 			wp_send_json_error( [ 'message' => __( 'Invalid request.', 'statement-processor' ) ] );
 		}
 		$transient_key = self::REVIEW_TRANSIENT_PREFIX . $review_key;
 		$data          = get_transient( $transient_key );
 		if ( $data === false || ! is_array( $data ) || empty( $data['transactions'] ) ) {
-			if ( function_exists( 'ob_get_level' ) && ob_get_level() ) {
-				ob_end_clean();
-			}
+			$this->discard_output_buffers();
 			wp_send_json_error( [ 'message' => __( 'Review session expired or invalid.', 'statement-processor' ) ] );
 		}
 		$include = isset( $_POST['include'] ) && is_array( $_POST['include'] ) ? array_map( 'absint', $_POST['include'] ) : [];
@@ -253,9 +250,7 @@ class UploadHandler {
 		try {
 			$selected = $this->build_selected_transactions( $include, $tx_post, $data );
 		} catch ( \Throwable $e ) {
-			if ( function_exists( 'ob_get_level' ) && ob_get_level() ) {
-				ob_end_clean();
-			}
+			$this->discard_output_buffers();
 			wp_send_json_error( [ 'message' => __( 'Error preparing transactions.', 'statement-processor' ) ] );
 		}
 		$imported = 0;
@@ -271,9 +266,7 @@ class UploadHandler {
 				$errors   = isset( $results['errors'] ) && is_array( $results['errors'] ) ? $results['errors'] : [];
 				$skipped_transactions = isset( $results['skipped_transactions'] ) && is_array( $results['skipped_transactions'] ) ? $results['skipped_transactions'] : [];
 			} catch ( \Throwable $e ) {
-				if ( function_exists( 'ob_get_level' ) && ob_get_level() ) {
-					ob_end_clean();
-				}
+				$this->discard_output_buffers();
 				wp_send_json_error( [ 'message' => __( 'Error during import.', 'statement-processor' ) ] );
 			}
 		}
@@ -302,9 +295,7 @@ class UploadHandler {
 				'skipped_transactions' => isset( $totals['skipped_transactions'] ) ? $totals['skipped_transactions'] : [],
 			] );
 			$this->log_import_debug( 'ajax_import_batch: sending JSON success (last batch)' );
-			if ( function_exists( 'ob_get_level' ) && ob_get_level() ) {
-				ob_end_clean();
-			}
+			$this->discard_output_buffers();
 			wp_send_json_success( [
 				'done'         => true,
 				'redirect_url' => $this->import_page_url(),
@@ -313,9 +304,7 @@ class UploadHandler {
 			] );
 		}
 		$this->log_import_debug( 'ajax_import_batch: sending JSON success (batch)', [ 'batch' => $batch_number + 1, 'total' => $total_batches ] );
-		if ( function_exists( 'ob_get_level' ) && ob_get_level() ) {
-			ob_end_clean();
-		}
+		$this->discard_output_buffers();
 		wp_send_json_success( [
 			'done'     => false,
 			'imported' => $imported,

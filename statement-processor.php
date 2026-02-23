@@ -24,6 +24,13 @@ define( 'STATEMENT_PROCESSOR_PLUGIN_FILE', __FILE__ );
 define( 'STATEMENT_PROCESSOR_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'STATEMENT_PROCESSOR_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
+// Capture all output for import-batch AJAX so the response is only our JSON (run as soon as plugin loads).
+if ( defined( 'DOING_AJAX' ) && DOING_AJAX
+	&& isset( $_REQUEST['action'] ) && $_REQUEST['action'] === 'statement_processor_import_batch'
+	&& function_exists( 'ob_start' ) ) {
+	ob_start();
+}
+
 $statement_processor_autoload = STATEMENT_PROCESSOR_PLUGIN_DIR . 'vendor/autoload.php';
 if ( is_readable( $statement_processor_autoload ) ) {
 	require_once $statement_processor_autoload;
