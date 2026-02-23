@@ -16,8 +16,8 @@ Upload financial transaction files (PDF and CSV) from bank and credit card state
 - **Multiple file upload**: PDF and CSV; convention-based column/field detection with optional mapping.
 - **PDF parsing**:
   - **Text extraction**: Prefers `pdftotext -layout` (poppler-utils) so columnar statement layouts stay on one line; fallback to Composer dependency `smalot/pdfparser`. OCR fallback (Tesseract) when text cannot be extracted. Uploaded files are processed from PHP temp and are not stored.
-  - **Supported statement types**: Discover (with optional AI parsing), Capital One, PayPal Credit, Ally-style, and generic table/line layouts.
-- **AI parsing for Discover statements**: Optional use of an LLM (OpenAI) to extract transactions from Discover bank statement PDFs. When enabled in **Settings → Statement Processor**, the plugin sends extracted PDF text to the configured provider and receives a structured list of transactions (date, description, amount), improving accuracy and coverage over regex-only parsing.
+  - **Supported statement types**: Discover (with optional AI parsing), Capital One, PayPal Credit, Ally (with optional AI parsing), and generic table/line layouts.
+- **AI parsing**: Optional use of an LLM (OpenAI) to extract transactions from **Discover** and **Ally Bank** statement PDFs. When enabled in **Settings → Statement Processor**, the plugin sends extracted PDF text to the configured provider and receives a structured list of transactions (date, description, amount). For Ally, AI is tried first and the plugin falls back to text-based parsing if AI is off or returns nothing.
 - **Review before import**: After upload, you review parsed transactions (edit, set source, exclude rows), then click **Import selected**.
 - **Upload feedback**: The **Upload and review** button is disabled and shows a spinner and “Processing…” while the upload is being processed (especially useful for Discover statements using AI).
 - **CSV export**: Filter by year, month, and source; download CSV with Date, Time, Description, Amount, Source, Transaction ID.
@@ -32,9 +32,9 @@ Upload financial transaction files (PDF and CSV) from bank and credit card state
 
 - PHP 7.4+
 - WordPress 5.8+
-- **PDF text extraction**: The plugin uses `pdftotext -layout` (poppler-utils) when available so columnar statement layouts (e.g. PayPal Credit) parse correctly; otherwise it uses the Composer dependency `smalot/pdfparser`. Install poppler-utils for best results with credit card/bank statement PDFs.
-- **OCR** (scanned PDFs): Tesseract OCR and, for PDF-to-image, Imagick extension or `pdftoppm` (poppler-utils).
-- **AI parsing (optional)**: For Discover statement AI parsing, configure an OpenAI API key in **Settings → Statement Processor**. The plugin calls the OpenAI API directly over HTTP; no separate provider package is required.
+- **PDF text extraction**: The plugin uses `pdftotext -layout` (poppler-utils) when available so columnar statement layouts parse correctly; otherwise it uses the Composer dependency **smalot/pdfparser** (pure PHP, no server binary required). So you can run without any system PDF tools; `smalot/pdfparser` is the in-process fallback.
+- **OCR** (scanned/image-only PDFs): Optional Tesseract OCR and Imagick or `pdftoppm` for PDF-to-image when the text layer is empty. For environments where you cannot install Tesseract, consider a cloud OCR API (e.g. Google Cloud Vision, AWS Textract) and integrate via a custom filter or wrapper around the plugin’s text extractor.
+- **AI parsing (optional)**: For Discover and Ally statement parsing, configure an OpenAI API key in **Settings → Statement Processor**. The plugin calls the OpenAI API directly over HTTP; no separate provider package is required.
 
 **DDEV: Installing pdftotext (poppler-utils)**  
 The container’s package lists are often stale. Update first, then install:
@@ -58,7 +58,7 @@ Then run `ddev restart` so the web image rebuilds with the package. After that, 
    In the admin sidebar, go to **Transactions → Import** (the Import submenu under the Statement Processor transactions list).
 
 2. **Configure AI (optional)**  
-   For better parsing of **Discover** statement PDFs, go to **Settings → Statement Processor**. Enable **Use AI to parse Discover (and compatible) statement PDFs**, choose **OpenAI (GPT)** as provider, enter your **API key**, and optionally set the **Model** (e.g. `gpt-4o-mini`). Save settings.
+   For better parsing of **Discover** and **Ally Bank** statement PDFs, go to **Settings → Statement Processor**. Enable **Use AI to parse Discover (and compatible) statement PDFs**, choose **OpenAI (GPT)** as provider, enter your **API key**, and optionally set the **Model** (e.g. `gpt-4o-mini`). Save settings. Ally statements use AI first and fall back to text parsing if needed.
 
 3. **Upload and review**  
    - Choose or enter a **Source** (e.g. “Discover”, “Chase Checking”, or “Detect Automatically”).
@@ -76,8 +76,13 @@ Transactions appear under **Transactions** (the `sp-transaction` post type list)
 - **Discover**: ACCOUNT ACTIVITY with Eff. Date, Syst. Date, Description, Amount. When AI is enabled in settings, an LLM is used to extract transactions (improved descriptions and correct debit/credit sign from transaction type).
 - **Capital One**: Multi-account style with DATE DESCRIPTION AMOUNT rows.
 - **PayPal Credit**: CURRENT ACTIVITY with PAYMENTS & CREDITS, PURCHASES & ADJUSTMENTS, and FEES sections (Synchrony-style).
-- **Ally**: Trans Date, Post Date, Reference, Description, Amount rows.
+- **Ally**: Combined customer statement with Activity table (Date, Description, Credits, Debits, Balance). When AI is enabled, an LLM extracts only real transactions (skips Beginning/Ending Balance, page numbers, addresses); otherwise text-based parsing is used.
 - **Generic**: Table-style and line-style date/description/amount patterns.
+
+## PDF and OCR (no server software)
+
+- **Text PDFs**: If `pdftotext` (poppler-utils) is not installed, the plugin uses the Composer package **smalot/pdfparser** to extract text. No server binaries are required; it runs in PHP only. Layout may differ slightly from `pdftotext -layout`.
+- **Scanned/image PDFs**: The plugin can use Tesseract OCR when the native text layer is empty (requires Tesseract and Imagick or pdftoppm on the server). To avoid installing OCR software, you can use a cloud OCR API (e.g. Google Cloud Vision, AWS Textract, Azure Document Intelligence) by extending or replacing `PdfTextExtractor` to call the API and return the extracted text.
 
 ## Troubleshooting (Import returns HTML / "invalid response")
 

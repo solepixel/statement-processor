@@ -76,6 +76,17 @@ class PdfParser {
 			}
 		}
 
+		// When AI is enabled and this looks like an Ally Bank statement, use LLM extraction first; fall back to text parsing.
+		if ( class_exists( 'StatementProcessor\Admin\SettingsPage' ) && \StatementProcessor\Admin\SettingsPage::is_ai_configured()
+			&& class_exists( 'StatementProcessor\Parser\AllyPdfAiParser' )
+			&& AllyPdfAiParser::is_ally_statement( $text ) ) {
+			$ally_ai = new AllyPdfAiParser();
+			$ally_rows = $ally_ai->parse( $file_path );
+			if ( ! empty( $ally_rows ) ) {
+				return $ally_rows;
+			}
+		}
+
 		return $this->parse_text_to_transactions( $text );
 	}
 
