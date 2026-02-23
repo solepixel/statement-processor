@@ -25,7 +25,11 @@
 	"config": {
 		"optimize-autoloader": true,
 		"allow-plugins": {
-			"php-http/discovery": true
+			"php-http/discovery": true,
+			"dealerdirect/phpcodesniffer-composer-installer": true
 		}
+	},
+	"require-dev": {
+		"wp-coding-standards/wpcs": "^3.3"
 	}
 }

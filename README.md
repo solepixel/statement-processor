@@ -12,23 +12,29 @@ Upload financial transaction files (PDF and CSV) from bank and credit card state
 ## Features
 
 - **Custom post type** `sp-transaction`: each transaction is a post with publish date = transaction date, title = `{Description} {Amount}`, and meta `_transaction_id`, `_amount`, `_description`.
-- **Custom taxonomy** `sp-source`: assign a source (e.g. bank or card name) per upload; filter and export by source.
+- **Custom taxonomy** `sp-source`: assign a source (e.g. bank or card name) per upload or per row; filter and export by source.
 - **Multiple file upload**: PDF and CSV; convention-based column/field detection with optional mapping.
-- **PDF**: native text extraction (pdftotext preferred for statement layouts; fallback to smalot/pdfparser); OCR fallback (Tesseract) when text cannot be extracted. Uploaded files are processed from PHP temp and are not stored.
-- **CSV export**: filter by year, month, and source; download CSV with Date, Time, Description, Amount, Source, Transaction ID.
+- **PDF parsing**:
+  - **Text extraction**: Prefers `pdftotext -layout` (poppler-utils) so columnar statement layouts stay on one line; fallback to Composer dependency `smalot/pdfparser`. OCR fallback (Tesseract) when text cannot be extracted. Uploaded files are processed from PHP temp and are not stored.
+  - **Supported statement types**: Discover (with optional AI parsing), Capital One, PayPal Credit, Ally-style, and generic table/line layouts.
+- **AI parsing for Discover statements**: Optional use of an LLM (OpenAI) to extract transactions from Discover bank statement PDFs. When enabled in **Settings → Statement Processor**, the plugin sends extracted PDF text to the configured provider and receives a structured list of transactions (date, description, amount), improving accuracy and coverage over regex-only parsing.
+- **Review before import**: After upload, you review parsed transactions (edit, set source, exclude rows), then click **Import selected**.
+- **Upload feedback**: The **Upload and review** button is disabled and shows a spinner and “Processing…” while the upload is being processed (especially useful for Discover statements using AI).
+- **CSV export**: Filter by year, month, and source; download CSV with Date, Time, Description, Amount, Source, Transaction ID.
 
 ## Installation
 
 1. Copy the plugin into `wp-content/plugins/statement-processor` (or clone this repo into that path).
-2. Run `composer install` in the plugin directory (for autoload and optional dev tools).
+2. Run `composer install` in the plugin directory (for autoload and dependencies, including `wordpress/php-ai-client` and `smalot/pdfparser`).
 3. Activate the plugin in the WordPress admin.
 
 ## Requirements
 
 - PHP 7.4+
 - WordPress 5.8+
-- For **PDF text extraction**: The plugin tries `pdftotext` (poppler-utils) first so columnar statement layouts parse correctly; if unavailable it uses Composer dependency `smalot/pdfparser`. Install poppler-utils for best results with credit card/bank statement PDFs.
-- For **OCR** (scanned PDFs): Tesseract OCR and, for PDF-to-image, Imagick extension or `pdftoppm` (poppler-utils).
+- **PDF text extraction**: The plugin uses `pdftotext -layout` (poppler-utils) when available so columnar statement layouts (e.g. PayPal Credit) parse correctly; otherwise it uses the Composer dependency `smalot/pdfparser`. Install poppler-utils for best results with credit card/bank statement PDFs.
+- **OCR** (scanned PDFs): Tesseract OCR and, for PDF-to-image, Imagick extension or `pdftoppm` (poppler-utils).
+- **AI parsing (optional)**: For Discover statement AI parsing, configure an OpenAI API key in **Settings → Statement Processor**. The plugin calls the OpenAI API directly over HTTP; no separate provider package is required.
 
 **DDEV: Installing pdftotext (poppler-utils)**  
 The container’s package lists are often stale. Update first, then install:
@@ -48,16 +54,30 @@ Then run `ddev restart` so the web image rebuilds with the package. After that, 
 
 ## Usage
 
-1. In the admin, open **Statement Processor** in the sidebar.
-2. **Upload**: Choose or enter a **Source** (e.g. "Chase Checking"), select one or more PDF or CSV files, then click **Upload and import**.
-3. **Export**: Use the **Export to CSV** section to set year, month, and source filters, then click **Download CSV**.
+1. **Transactions → Import**  
+   In the admin sidebar, go to **Transactions → Import** (the Import submenu under the Statement Processor transactions list).
 
-Transactions appear under **Statement Processor → All Transactions**. Duplicate transactions (same date, description, amount) are skipped on import using `_transaction_id`.
+2. **Configure AI (optional)**  
+   For better parsing of **Discover** statement PDFs, go to **Settings → Statement Processor**. Enable **Use AI to parse Discover (and compatible) statement PDFs**, choose **OpenAI (GPT)** as provider, enter your **API key**, and optionally set the **Model** (e.g. `gpt-4o-mini`). Save settings.
 
-## Development
+3. **Upload and review**  
+   - Choose or enter a **Source** (e.g. “Discover”, “Chase Checking”, or “Detect Automatically”).
+   - Select one or more PDF or CSV files (drag-and-drop or browse).
+   - Click **Upload and review**. The button is disabled and shows “Processing…” while the server parses the file(s). For Discover PDFs with AI enabled, this may take longer.
+   - On the review screen, you can edit date/description/amount, set or change the source per row, and uncheck rows to exclude from import. Click **Import selected** to create transaction posts, or **Cancel** to go back.
 
-- **PHPCS:** Install [WordPress Coding Standards](https://github.com/WordPress/WordPress-Coding-Standards) (e.g. `composer require --dev wp-coding-standards/wpcs`), then run `vendor/bin/phpcs` using the included `.phpcs.xml`.
-- **EditorConfig:** Use the provided `.editorconfig` for indentation and line endings.
+4. **Export**  
+   In the same Import page, use the **Export to CSV** section to set year, month, and source filters, then click **Download CSV**.
+
+Transactions appear under **Transactions** (the `sp-transaction` post type list). Duplicate transactions (same date, description, amount) are skipped on import using `_transaction_id`.
+
+## Supported statement formats
+
+- **Discover**: ACCOUNT ACTIVITY with Eff. Date, Syst. Date, Description, Amount. When AI is enabled in settings, an LLM is used to extract transactions (improved descriptions and correct debit/credit sign from transaction type).
+- **Capital One**: Multi-account style with DATE DESCRIPTION AMOUNT rows.
+- **PayPal Credit**: CURRENT ACTIVITY with PAYMENTS & CREDITS, PURCHASES & ADJUSTMENTS, and FEES sections (Synchrony-style).
+- **Ally**: Trans Date, Post Date, Reference, Description, Amount rows.
+- **Generic**: Table-style and line-style date/description/amount patterns.
 
 ## Uninstall
 
