@@ -100,6 +100,10 @@ class PdfParser {
 		if ( ! empty( $paypal_credit ) ) {
 			return $paypal_credit;
 		}
+		$ally_activity = $this->parse_ally_activity_table( $text );
+		if ( ! empty( $ally_activity ) ) {
+			return $ally_activity;
+		}
 		$ally_rows = $this->parse_ally_row_style_transactions( $text );
 		if ( ! empty( $ally_rows ) ) {
 			return $ally_rows;
@@ -486,6 +490,132 @@ class PdfParser {
 		// Header "Amount" sometimes merged with first date (e.g. "Amoun08/27 08/27...") — split so first data row starts on its own line.
 		$text = preg_replace( '/(Amoun)(\d{1,2}\/\d{1,2}\s+\d{1,2}\/\d{1,2}\s+[A-Z0-9])/iu', '$1' . "\n" . '$2', $text );
 		return $text;
+	}
+
+	/**
+	 * Parse Ally checking/savings "Activity" table: Date, Description, Credits, Debits, Balance.
+	 *
+	 * - Credits = deposit (positive amount). Debits = withdrawal (negative amount). Balance is never used.
+	 * - Description must contain only the Description column text; no amount values go into the description.
+	 *
+	 * Layout: Activity header, then "Date  Description  Credits  Debits  Balance", then rows (multi-line
+	 * or single-line). Beginning/Ending Balance rows are skipped.
+	 *
+	 * @param string $text Raw extracted text.
+	 * @return array<int, array{date: string, time: string, description: string, amount: string}>
+	 */
+	private function parse_ally_activity_table( $text ) {
+		if ( ! preg_match( '/\bActivity\b/i', $text ) || ! preg_match( '/Date\s+Description\s+Credits\s+Debits\s+Balance/i', $text ) ) {
+			return [];
+		}
+
+		$lines        = preg_split( '/\r\n|\r|\n/', $text, -1, PREG_SPLIT_NO_EMPTY );
+		$transactions = [];
+		$in_activity  = false;
+		$in_table     = false;
+		$current_date = null;
+		$current_desc = [];
+
+		foreach ( $lines as $raw_line ) {
+			$line = trim( $raw_line );
+			if ( $line === '' ) {
+				continue;
+			}
+
+			if ( ! $in_activity && preg_match( '/^Activity$/i', $line ) ) {
+				$in_activity  = true;
+				$in_table     = false;
+				$current_date = null;
+				$current_desc = [];
+				continue;
+			}
+
+			if ( $in_activity && ! $in_table ) {
+				if ( preg_match( '/^Date\s+Description\s+Credits\s+Debits\s+Balance/i', $line ) ) {
+					$in_table = true;
+				}
+				continue;
+			}
+
+			if ( ! $in_table ) {
+				continue;
+			}
+
+			// Stop parsing when we leave the activity section for this account.
+			if ( preg_match( '/^--\s*\d+\s+of\s+\d+\s*--$/', $line ) || preg_match( '/^Ally\s+Bank\s+Member\s+FDIC/i', $line ) ) {
+				break;
+			}
+
+			// Single-line row with all five columns: Date, Description, Credits, Debits, Balance. Use only Credits and Debits for amount; never Balance.
+			if ( preg_match( '/^(\d{1,2}\/\d{1,2}\/\d{4})\s+(.+?)\s+(\$?-?[\d,]+\.\d{2})\s+(\$?-?[\d,]+\.\d{2})\s+(\$?-?[\d,]+\.\d{2})\s*$/u', $line, $m ) ) {
+				$desc_raw = trim( $m[2] );
+				if ( preg_match( '/^(Beginning\s+Balance|Ending\s+Balance)$/i', $desc_raw ) ) {
+					$current_date = null;
+					$current_desc = [];
+					continue;
+				}
+				$credits = $this->normalize_amount_string( $m[3] );
+				$debits  = $this->normalize_amount_string( $m[4] );
+				$amount  = ( $debits !== '0.00' && (float) $debits !== 0.0 ) ? $debits : $credits;
+				$date_norm = $this->normalize_date( $m[1] );
+				if ( $date_norm !== '' ) {
+					$transactions[] = [
+						'date'        => $date_norm,
+						'time'        => '00:00:00',
+						'description' => preg_replace( '/\s+/', ' ', $desc_raw ),
+						'amount'      => $amount,
+					];
+				}
+				$current_date = null;
+				$current_desc = [];
+				continue;
+			}
+
+			// One-amount line (Beginning/Ending Balance only): skip; do not put amount in description.
+			if ( preg_match( '/^(\d{1,2}\/\d{1,2}\/\d{4})\s+(Beginning\s+Balance|Ending\s+Balance)\s+(\$?-?[\d,]+\.\d{2})\s*$/i', $line ) ) {
+				$current_date = null;
+				$current_desc = [];
+				continue;
+			}
+
+			// Date + start of description; amounts (Credits, Debits, Balance) on a later line.
+			if ( preg_match( '/^(\d{1,2}\/\d{1,2}\/\d{4})\s+(.+)$/', $line, $m ) && ! preg_match( '/^\$?-?[\d,]+\.\d{2}\s+\$?-?[\d,]+\.\d{2}\s+\$?-?[\d,]+\.\d{2}\s*$/', $line ) ) {
+				$current_date = $m[1];
+				$current_desc = [ trim( $m[2] ) ];
+				continue;
+			}
+
+			// Credits, Debits, Balance line (three columns only). Use Credits and Debits for amount; Balance is never used.
+			if ( $current_date !== null && preg_match( '/^(\$?-?[\d,]+\.\d{2})\s+(\$?-?[\d,]+\.\d{2})\s+(\$?-?[\d,]+\.\d{2})\s*$/', $line, $m ) ) {
+				$credits = $this->normalize_amount_string( $m[1] );
+				$debits  = $this->normalize_amount_string( $m[2] );
+				$amount  = ( $debits !== '0.00' && (float) $debits !== 0.0 ) ? $debits : $credits;
+
+				$date_norm = $this->normalize_date( $current_date );
+				if ( $date_norm !== '' ) {
+					$desc = preg_replace( '/\s+/', ' ', implode( ' ', $current_desc ) );
+					if ( ! preg_match( '/^(Beginning\s+Balance|Ending\s+Balance)$/i', $desc ) ) {
+						$transactions[] = [
+							'date'        => $date_norm,
+							'time'        => '00:00:00',
+							'description' => $desc,
+							'amount'      => $amount,
+						];
+					}
+				}
+
+				$current_date = null;
+				$current_desc = [];
+				continue;
+			}
+
+			// Continuation of description (no date, no amounts line).
+			if ( $current_date !== null && ! preg_match( '/^\d{1,2}\/\d{1,2}\/\d{4}\s/', $line ) && ! preg_match( '/^\$?-?[\d,]+\.\d{2}\s+\$?-?[\d,]+\.\d{2}\s+\$?-?[\d,]+\.\d{2}\s*$/', $line ) ) {
+				$current_desc[] = $line;
+			}
+		}
+
+		return $transactions;
 	}
 
 	/**
