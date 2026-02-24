@@ -42,6 +42,16 @@ class UploadHandler {
 	const REST_NAMESPACE = 'statement-processor/v1';
 
 	/**
+	 * Option name for import history (list of { date, files }).
+	 */
+	const IMPORT_HISTORY_OPTION = 'statement_processor_import_history';
+
+	/**
+	 * Max number of import history entries to keep.
+	 */
+	const IMPORT_HISTORY_MAX = 100;
+
+	/**
 	 * Constructor; registers form handling and REST route for import batch.
 	 */
 	public function __construct() {
@@ -136,6 +146,7 @@ class UploadHandler {
 		if ( $is_last ) {
 			delete_transient( $transient_key );
 			delete_transient( $batch_totals_key );
+			$this->record_import_history( $selected );
 			$this->set_notice( [
 				'imported'             => $totals['imported'],
 				'skipped'              => $totals['skipped'],
@@ -295,6 +306,7 @@ class UploadHandler {
 		$importer = new \StatementProcessor\Import\TransactionImporter();
 		$results  = $importer->import( $selected );
 		delete_transient( $transient_key );
+		$this->record_import_history( $selected );
 		$this->set_notice( $results );
 		wp_safe_redirect( $this->import_page_url() );
 		exit;
@@ -403,6 +415,7 @@ class UploadHandler {
 		if ( $is_last ) {
 			delete_transient( $transient_key );
 			delete_transient( $batch_totals_key );
+			$this->record_import_history( $selected );
 			$this->set_notice( [
 				'imported'            => $totals['imported'],
 				'skipped'             => $totals['skipped'],
@@ -785,5 +798,29 @@ class UploadHandler {
 		if ( ! empty( $results['skipped_transactions'] ) && is_array( $results['skipped_transactions'] ) ) {
 			set_transient( 'statement_processor_skipped_duplicates', $results['skipped_transactions'], 300 );
 		}
+	}
+
+	/**
+	 * Append one entry to import history (unique filenames from selected transactions).
+	 *
+	 * @param array $selected Selected transactions (each may have 'origination').
+	 */
+	private function record_import_history( array $selected ) {
+		$files = array_values( array_unique( array_filter( array_map( function ( $row ) {
+			return isset( $row['origination'] ) ? $row['origination'] : null;
+		}, $selected ) ) ) );
+		if ( empty( $files ) ) {
+			return;
+		}
+		$history = get_option( self::IMPORT_HISTORY_OPTION, [] );
+		if ( ! is_array( $history ) ) {
+			$history = [];
+		}
+		array_unshift( $history, [
+			'date'  => current_time( 'mysql' ),
+			'files' => $files,
+		] );
+		$history = array_slice( $history, 0, self::IMPORT_HISTORY_MAX );
+		update_option( self::IMPORT_HISTORY_OPTION, $history );
 	}
 }

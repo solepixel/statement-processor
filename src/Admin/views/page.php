@@ -7,6 +7,7 @@
  * @var bool    $show_review
  * @var array|null $review_data  ['transactions' => array, 'source_name' => string, 'source_term_id' => int]
  * @var string  $review_key
+ * @var array   $import_history  List of { date, files } for import history.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -208,6 +209,34 @@ if ( is_array( $skipped_duplicates ) && ! empty( $skipped_duplicates ) ) {
 				<button type="submit" class="button button-primary statement-processor-upload-btn" id="statement_processor_upload_btn"><?php esc_html_e( 'Upload and review', 'statement-processor' ); ?></button>
 			</p>
 		</form>
+
+		<?php if ( ! empty( $import_history ) ) : ?>
+			<div class="statement-processor-import-history" style="margin-top: 2em;">
+				<h3><?php esc_html_e( 'Import history', 'statement-processor' ); ?></h3>
+				<p class="description"><?php esc_html_e( 'Recently imported files.', 'statement-processor' ); ?></p>
+				<table class="wp-list-table widefat fixed striped">
+					<thead>
+						<tr>
+							<th scope="col"><?php esc_html_e( 'Date', 'statement-processor' ); ?></th>
+							<th scope="col"><?php esc_html_e( 'Files', 'statement-processor' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php foreach ( $import_history as $entry ) : ?>
+							<tr>
+								<td><?php echo esc_html( isset( $entry['date'] ) ? $entry['date'] : '—' ); ?></td>
+								<td>
+									<?php
+									$files = isset( $entry['files'] ) && is_array( $entry['files'] ) ? $entry['files'] : [];
+									echo esc_html( implode( ', ', $files ) );
+									?>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+					</tbody>
+				</table>
+			</div>
+		<?php endif; ?>
 	</div>
 	<?php endif; ?>
 </div>

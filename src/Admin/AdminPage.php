@@ -129,6 +129,11 @@ class AdminPage {
 			$sources = [];
 		}
 
+		$import_history = get_option( UploadHandler::IMPORT_HISTORY_OPTION, [] );
+		if ( ! is_array( $import_history ) ) {
+			$import_history = [];
+		}
+
 		include STATEMENT_PROCESSOR_PLUGIN_DIR . 'src/Admin/views/page.php';
 	}
 }
