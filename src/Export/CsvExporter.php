@@ -20,12 +20,49 @@ if ( ! defined( 'ABSPATH' ) ) {
 class CsvExporter {
 
 	/**
+	 * Default column order for CSV export.
+	 *
+	 * @var string[]
+	 */
+	const DEFAULT_COLUMNS = array( 'date', 'time', 'description', 'amount', 'source', 'category', 'tx_id' );
+
+	/**
+	 * Get available export columns (key => label).
+	 *
+	 * @return array<string, string>
+	 */
+	public static function get_available_columns() {
+		return array(
+			'date'        => __( 'Date', 'statement-processor' ),
+			'time'        => __( 'Time', 'statement-processor' ),
+			'description' => __( 'Description', 'statement-processor' ),
+			'amount'      => __( 'Amount', 'statement-processor' ),
+			'source'      => __( 'Source', 'statement-processor' ),
+			'category'    => __( 'Category', 'statement-processor' ),
+			'tx_id'       => __( 'Transaction ID', 'statement-processor' ),
+		);
+	}
+
+	/**
 	 * Export transactions to CSV and send download headers.
 	 */
 	public function export() {
-		$year  = isset( $_GET['export_year'] ) ? absint( $_GET['export_year'] ) : 0;
-		$month = isset( $_GET['export_month'] ) ? absint( $_GET['export_month'] ) : 0;
+		$year      = isset( $_GET['export_year'] ) ? absint( $_GET['export_year'] ) : 0;
+		$month     = isset( $_GET['export_month'] ) ? absint( $_GET['export_month'] ) : 0;
 		$source_id = isset( $_GET['export_source'] ) ? absint( $_GET['export_source'] ) : 0;
+
+		$available = array_keys( self::get_available_columns() );
+		$columns   = array();
+		if ( ! empty( $_GET['export_columns'] ) && is_array( $_GET['export_columns'] ) ) {
+			foreach ( array_map( 'sanitize_text_field', array_map( 'wp_unslash', (array) $_GET['export_columns'] ) ) as $key ) {
+				if ( in_array( $key, $available, true ) ) {
+					$columns[] = $key;
+				}
+			}
+		}
+		if ( empty( $columns ) ) {
+			$columns = self::DEFAULT_COLUMNS;
+		}
 
 		$args = [
 			'post_type'      => Plugin::post_type(),
@@ -77,7 +114,12 @@ class CsvExporter {
 
 		// UTF-8 BOM for Excel.
 		fprintf( $out, "\xEF\xBB\xBF" );
-		fputcsv( $out, array( 'Date', 'Time', 'Description', 'Amount', 'Source', 'Category', 'Transaction ID' ), ',', '"', '\\' );
+		$labels = self::get_available_columns();
+		$header = array();
+		foreach ( $columns as $key ) {
+			$header[] = isset( $labels[ $key ] ) ? $labels[ $key ] : $key;
+		}
+		fputcsv( $out, $header, ',', '"', '\\' );
 
 		foreach ( $ids as $post_id ) {
 			$post = get_post( $post_id );
@@ -93,7 +135,20 @@ class CsvExporter {
 			$source  = ( $terms && ! is_wp_error( $terms ) && isset( $terms[0] ) ) ? $terms[0]->name : '';
 			$cat_terms = get_the_terms( $post_id, Plugin::taxonomy_category() );
 			$category  = ( $cat_terms && ! is_wp_error( $cat_terms ) && isset( $cat_terms[0] ) ) ? $cat_terms[0]->name : '';
-			fputcsv( $out, array( $date, $time, $desc, $amount, $source, $category, $tx_id ), ',', '"', '\\' );
+			$row = array(
+				'date'        => $date,
+				'time'        => $time,
+				'description' => $desc,
+				'amount'      => $amount,
+				'source'      => $source,
+				'category'    => $category,
+				'tx_id'       => $tx_id,
+			);
+			$out_row = array();
+			foreach ( $columns as $key ) {
+				$out_row[] = isset( $row[ $key ] ) ? $row[ $key ] : '';
+			}
+			fputcsv( $out, $out_row, ',', '"', '\\' );
 		}
 
 		fclose( $out );

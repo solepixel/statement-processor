@@ -34,7 +34,8 @@ class ExportPage {
 	 * Constructor; hooks into admin.
 	 */
 	public function __construct() {
-		add_action( 'admin_menu', [ $this, 'add_menu_page' ], 21 );
+		add_action( 'admin_menu', array( $this, 'add_menu_page' ), 21 );
+		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_export_assets' ), 10, 1 );
 	}
 
 	/**
@@ -52,6 +53,18 @@ class ExportPage {
 	}
 
 	/**
+	 * Enqueue scripts and styles for the Export page (column sortable).
+	 *
+	 * @param string $hook_suffix Current admin page hook.
+	 */
+	public function enqueue_export_assets( $hook_suffix ) {
+		if ( $hook_suffix !== 'sp-transaction_page_' . self::PAGE_SLUG ) {
+			return;
+		}
+		wp_enqueue_script( 'jquery-ui-sortable' );
+	}
+
+	/**
 	 * Render the Export page content.
 	 */
 	public function render_page() {
@@ -59,10 +72,13 @@ class ExportPage {
 			wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'statement-processor' ) );
 		}
 
-		$sources = get_terms( [ 'taxonomy' => 'sp-source', 'hide_empty' => false ] );
+		$sources = get_terms( array( 'taxonomy' => 'sp-source', 'hide_empty' => false ) );
 		if ( is_wp_error( $sources ) ) {
-			$sources = [];
+			$sources = array();
 		}
+
+		$available_columns = \StatementProcessor\Export\CsvExporter::get_available_columns();
+		$default_columns   = \StatementProcessor\Export\CsvExporter::DEFAULT_COLUMNS;
 
 		include STATEMENT_PROCESSOR_PLUGIN_DIR . 'src/Admin/views/export-page.php';
 	}
