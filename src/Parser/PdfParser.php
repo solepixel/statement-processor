@@ -175,10 +175,26 @@ class PdfParser {
 			'/^Page\s+\d+/i',
 			'/^\d{4}-\d{2}-\d{2}\s*$/',  // date-only line misparsed as description
 			'/^[\d\-\/]+\s*$/',  // date or number only
+			'/^Deposits\s+and\s+Other\s+Credits/i',
+			'/^Withdrawals\s+and\s+Other\s+Debits/i',
+			'/^Interest\s+Paid\s+This\s+Period/i',
+			'/^ATM\s+Fees\s+Reimbursed/i',
+			'/^Overdraft\s+Fee\s+Summary/i',
+			'/^Annual\s+Percentage\s+Yield/i',
+			'/^Average\s+Daily\s+Balance/i',
+			'/^Product\s*:/i',
+			'/^Account\s+Ownership\s*:/i',
+			'/^Summary\s*$/i',
+			'/^(Checking|Savings)\s*$/i',
 		];
 		$out = [];
 		foreach ( $transactions as $row ) {
-			$desc = isset( $row['description'] ) ? trim( (string) $row['description'] ) : '';
+			$desc  = isset( $row['description'] ) ? trim( (string) $row['description'] ) : '';
+			$amount = isset( $row['amount'] ) ? trim( (string) $row['amount'] ) : '';
+			// Drop zero-amount rows (no real movement); avoids Summary-section and misparsed lines.
+			if ( $amount === '0.00' || $amount === '-0.00' ) {
+				continue;
+			}
 			$skip = false;
 			foreach ( $junk as $pattern ) {
 				if ( preg_match( $pattern, $desc ) ) {
