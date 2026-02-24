@@ -764,9 +764,14 @@ class UploadHandler {
 	private function parse_file( $file_path, $original_name ) {
 		$ext = strtolower( pathinfo( $original_name, PATHINFO_EXTENSION ) );
 		if ( $ext === 'csv' ) {
-			$parser = new \StatementProcessor\Parser\CsvParser();
-			$rows   = $parser->parse( $file_path );
-			$parsed = $parser->map_to_transactions( $rows );
+			if ( \StatementProcessor\Parser\AllyCsvParser::is_ally_csv( $file_path ) ) {
+				$ally_parser = new \StatementProcessor\Parser\AllyCsvParser();
+				$parsed     = $ally_parser->parse( $file_path );
+			} else {
+				$parser = new \StatementProcessor\Parser\CsvParser();
+				$rows   = $parser->parse( $file_path );
+				$parsed = $parser->map_to_transactions( $rows );
+			}
 		} else {
 			$parser = new \StatementProcessor\Parser\PdfParser();
 			$parsed = $parser->parse( $file_path );

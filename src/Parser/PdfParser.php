@@ -1023,13 +1023,25 @@ class PdfParser {
 	}
 
 	/**
-	 * Infer 4-digit statement year from text (e.g. from "Statement Closing Date 09/21/2025").
+	 * Infer 4-digit statement year from text.
+	 *
+	 * Tries, in order: (1) numeric date 09/21/2025, (2) Statement Period range
+	 * "Mar 1 - Mar 31, 2024", (3) "March 2024 STATEMENT PERIOD", then current year.
 	 *
 	 * @param string $text Full extracted text.
-	 * @return string
+	 * @return string 4-digit year.
 	 */
 	private function infer_statement_year( $text ) {
 		if ( preg_match( '/\d{1,2}\/\d{1,2}\/(\d{4})/', $text, $m ) ) {
+			return $m[1];
+		}
+		// Capital One / bank statements: "Mar 1 - Mar 31, 2024" or "Statement Period" next line "Mar 1 - Mar 31, 2024".
+		$months = '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)';
+		if ( preg_match( '/' . $months . '\s+\d{1,2}\s*-\s*' . $months . '\s+\d{1,2},?\s*(\d{4})/i', $text, $m ) ) {
+			return $m[1];
+		}
+		// "March 2024 STATEMENT PERIOD" (full month name + year).
+		if ( preg_match( '/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})\s+STATEMENT/i', $text, $m ) ) {
 			return $m[1];
 		}
 		return gmdate( 'Y' );
