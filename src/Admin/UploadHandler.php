@@ -767,6 +767,9 @@ class UploadHandler {
 			if ( \StatementProcessor\Parser\AllyCsvParser::is_ally_csv( $file_path ) ) {
 				$ally_parser = new \StatementProcessor\Parser\AllyCsvParser();
 				$parsed     = $ally_parser->parse( $file_path );
+			} elseif ( \StatementProcessor\Parser\CapitalOneCsvParser::is_capital_one_csv( $file_path ) ) {
+				$co_parser = new \StatementProcessor\Parser\CapitalOneCsvParser();
+				$parsed   = $co_parser->parse( $file_path, $original_name );
 			} else {
 				$parser = new \StatementProcessor\Parser\CsvParser();
 				$rows   = $parser->parse( $file_path );
